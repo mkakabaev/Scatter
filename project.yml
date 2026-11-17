@@ -1,0 +1,37 @@
+name: Scatter
+options:
+  bundleIdPrefix: com.kakabaev
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: "2.0.0"
+targets:
+  Scatter:
+    type: application
+    platform: macOS
+    sources:
+      - Scatter
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kakabaev.scatter
+        PRODUCT_NAME: Scatter
+        INFOPLIST_FILE: Scatter/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_ENTITLEMENTS: Scatter/Resources/Scatter.entitlements
+        CODE_SIGN_IDENTITY: "-"
+        AD_HOC_CODE_SIGNING_ALLOWED: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+    dependencies:
+      - package: KeyboardShortcuts
