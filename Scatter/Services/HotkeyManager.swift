@@ -10,14 +10,14 @@ enum HotkeyManager {
     static var toggleHandler: (() -> Void)?
 
     @MainActor
-    static func install(store: AppStore) {
+    static func install() {
         KeyboardShortcuts.onKeyUp(for: .toggleApp) {
             Task { @MainActor in
-                if let toggleHandler {
-                    toggleHandler()
-                } else {
-                    store.toggleMainWindow()
+                guard let toggleHandler else {
+                    assertionFailure("HotkeyManager.toggleHandler must be set before the hotkey fires")
+                    return
                 }
+                toggleHandler()
             }
         }
     }

@@ -24,7 +24,7 @@ enum IconProvider {
     static func openWithBadgeIcon(for item: LauncherItem, size: CGFloat) -> NSImage? {
         if isCodeWorkspace(item) { return nil }
         guard hasOpenWith(item),
-              let appURL = ItemOpener.resolveOpenWithApp(for: item, preferences: .default) else {
+              let appURL = ItemOpener.resolveOpenWithApp(for: item) else {
             return nil
         }
         return scaled(NSWorkspace.shared.icon(forFile: appURL.path), to: size)

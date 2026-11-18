@@ -6,7 +6,7 @@ enum OpenWithPanel {
         var alwaysOpenIn: Bool
     }
 
-    /// App picker with an “Always open in” checkbox accessory.
+    /// App picker with an “Always Open in” checkbox accessory.
     static func run(message: String = "Choose an app to open this item") -> Result? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -16,7 +16,7 @@ enum OpenWithPanel {
         panel.prompt = "Choose"
         panel.message = message
 
-        let checkbox = NSButton(checkboxWithTitle: "Always open in", target: nil, action: nil)
+        let checkbox = NSButton(checkboxWithTitle: "Always Open in", target: nil, action: nil)
         checkbox.state = .off
         checkbox.setButtonType(.switch)
 

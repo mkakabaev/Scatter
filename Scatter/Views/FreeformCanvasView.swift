@@ -17,8 +17,8 @@ struct FreeformCanvasView: View {
         let item: LauncherItem
     }
 
-    private var iconSize: CGFloat { store.state.preferences.iconSize }
-    private var labelSize: CGFloat { store.state.preferences.labelSize }
+    private var iconSize: CGFloat { store.state.settings.iconSize }
+    private var labelSize: CGFloat { store.state.settings.labelSize }
     private var itemWidth: CGFloat { TileMetrics.itemWidth(iconSize: iconSize) }
     private var itemHeight: CGFloat { TileMetrics.itemHeight(iconSize: iconSize, labelSize: labelSize) }
 
@@ -140,7 +140,7 @@ struct FreeformCanvasView: View {
             Button("Default") {
                 commitPendingDrop(openWithCursor: false)
             }
-            Button("Open with Cursor") {
+            Button("Open With Cursor") {
                 commitPendingDrop(openWithCursor: true)
             }
             Button("Cancel", role: .cancel) {
@@ -153,9 +153,9 @@ struct FreeformCanvasView: View {
 
     private var openChoiceTitle: String {
         if let name = pendingDrop?.item.displayName {
-            return "Open “\(name)” with"
+            return "Open “\(name)”"
         }
-        return "Open with"
+        return "Open With"
     }
 
     private func commitPendingDrop(openWithCursor: Bool) {
@@ -172,7 +172,7 @@ struct FreeformCanvasView: View {
             ItemOpener.reveal(item, keepWindowOpen: keepOpen, store: store)
             return
         }
-        ItemOpener.open(item, preferences: store.state.preferences, keepWindowOpen: keepOpen, store: store)
+        ItemOpener.open(item, settings: store.state.settings, keepWindowOpen: keepOpen, store: store)
     }
 
     /// Drag starts after a small pointer shift; a click with little/no movement opens the item.
@@ -224,7 +224,7 @@ struct FreeformCanvasView: View {
             itemID: itemID,
             proposed: proposed,
             items: collection.items,
-            preferences: store.state.preferences,
+            settings: store.state.settings,
             canvasSize: canvasSize
         )
         dropTargetFrame = frame == .null ? nil : frame
@@ -247,7 +247,7 @@ struct FreeformCanvasView: View {
     }
 
     private var timeZoneMenuTitle: String {
-        guard let identifier = store.state.preferences.timeZoneIdentifier,
+        guard let identifier = store.state.settings.timeZoneIdentifier,
               TimeZone(identifier: identifier) != nil else {
             return "Time Zone"
         }
@@ -260,7 +260,7 @@ struct FreeformCanvasView: View {
     @ViewBuilder
     private func itemContextMenu(_ item: LauncherItem) -> some View {
         Button(ItemOpener.primaryActionTitle(for: item)) {
-            ItemOpener.open(item, preferences: store.state.preferences, keepWindowOpen: false, store: store)
+            ItemOpener.open(item, settings: store.state.settings, keepWindowOpen: false, store: store)
         }
         if item.kind != .url {
             Button("Reveal in Finder") {
@@ -348,7 +348,7 @@ struct FreeformCanvasView: View {
         ItemOpener.open(
             item,
             withApplicationAt: appURL,
-            preferences: store.state.preferences,
+            settings: store.state.settings,
             keepWindowOpen: true,
             store: store
         )

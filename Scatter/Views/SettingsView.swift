@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import KeyboardShortcuts
 
-struct PreferencesView: View {
+struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
 
     var body: some View {
@@ -11,9 +11,9 @@ struct PreferencesView: View {
                 Toggle(
                     "Launch at login",
                     isOn: Binding(
-                        get: { store.state.preferences.launchAtLogin },
+                        get: { store.state.settings.launchAtLogin },
                         set: { enabled in
-                            store.updatePreferences { $0.launchAtLogin = enabled }
+                            store.updateSettings { $0.launchAtLogin = enabled }
                             LoginItemManager.setEnabled(enabled)
                         }
                     )
@@ -23,7 +23,7 @@ struct PreferencesView: View {
                     selection: Binding(
                         get: { timeZoneSelection },
                         set: { identifier in
-                            store.updatePreferences {
+                            store.updateSettings {
                                 $0.timeZoneIdentifier = identifier.isEmpty ? nil : identifier
                             }
                         }
@@ -47,46 +47,46 @@ struct PreferencesView: View {
                 ColorPicker(
                     "Background",
                     selection: Binding(
-                        get: { Color(nsColor: NSColor(hex: store.state.preferences.backgroundColorHex) ?? .black) },
+                        get: { Color(nsColor: NSColor(hex: store.state.settings.backgroundColorHex) ?? .black) },
                         set: { newColor in
                             let ns = NSColor(newColor)
-                            store.updatePreferences { $0.backgroundColorHex = ns.hexString }
+                            store.updateSettings { $0.backgroundColorHex = ns.hexString }
                         }
                     ),
                     supportsOpacity: true
                 )
                 appearanceSlider(
                     title: "Icon size",
-                    value: store.state.preferences.iconSize,
+                    value: store.state.settings.iconSize,
                     range: 36...128
                 ) { value in
-                    store.updatePreferences { $0.iconSize = value.rounded() }
+                    store.updateSettings { $0.iconSize = value.rounded() }
                 }
                 appearanceSlider(
                     title: "Label size",
-                    value: store.state.preferences.labelSize,
+                    value: store.state.settings.labelSize,
                     range: 10...18
                 ) { value in
-                    store.updatePreferences { $0.labelSize = value.rounded() }
+                    store.updateSettings { $0.labelSize = value.rounded() }
                 }
                 appearanceSlider(
                     title: "Horizontal spacing",
-                    value: store.state.preferences.gridSpacingHorizontal,
+                    value: store.state.settings.gridSpacingHorizontal,
                     range: 0...48
                 ) { value in
-                    store.updatePreferences { $0.gridSpacingHorizontal = value.rounded() }
+                    store.updateSettings { $0.gridSpacingHorizontal = value.rounded() }
                 }
                 appearanceSlider(
                     title: "Vertical spacing",
-                    value: store.state.preferences.gridSpacingVertical,
+                    value: store.state.settings.gridSpacingVertical,
                     range: 0...48
                 ) { value in
-                    store.updatePreferences { $0.gridSpacingVertical = value.rounded() }
+                    store.updateSettings { $0.gridSpacingVertical = value.rounded() }
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 560)
+        .frame(width: 480, height: 540)
         .padding()
     }
 
@@ -115,7 +115,7 @@ struct PreferencesView: View {
 
     /// `""` is the system zone (inject nothing).
     private var timeZoneSelection: String {
-        guard let identifier = store.state.preferences.timeZoneIdentifier,
+        guard let identifier = store.state.settings.timeZoneIdentifier,
               Self.timeZoneIDSet.contains(identifier) else { return "" }
         return identifier
     }

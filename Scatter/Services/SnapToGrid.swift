@@ -12,21 +12,21 @@ enum SnapToGrid {
         var row: Int
     }
 
-    static func cellSize(preferences: Preferences) -> CGSize {
-        let tileW = TileMetrics.itemWidth(iconSize: preferences.iconSize)
-        let tileH = TileMetrics.itemHeight(iconSize: preferences.iconSize, labelSize: preferences.labelSize)
+    static func cellSize(settings: AppState.Settings) -> CGSize {
+        let tileW = TileMetrics.itemWidth(iconSize: settings.iconSize)
+        let tileH = TileMetrics.itemHeight(iconSize: settings.iconSize, labelSize: settings.labelSize)
         return CGSize(
-            width: tileW + preferences.gridSpacingHorizontal,
-            height: tileH + preferences.gridSpacingVertical
+            width: tileW + settings.gridSpacingHorizontal,
+            height: tileH + settings.gridSpacingVertical
         )
     }
 
-    static func fullRowHeight(preferences: Preferences) -> CGFloat {
-        cellSize(preferences: preferences).height
+    static func fullRowHeight(settings: AppState.Settings) -> CGFloat {
+        cellSize(settings: settings).height
     }
 
-    static func emptyRowHeight(preferences: Preferences) -> CGFloat {
-        fullRowHeight(preferences: preferences) * emptyRowHeightFactor
+    static func emptyRowHeight(settings: AppState.Settings) -> CGFloat {
+        fullRowHeight(settings: settings) * emptyRowHeightFactor
     }
 
     // MARK: - Apply grid → absolute positions (empty rows = half height)
@@ -60,16 +60,16 @@ enum SnapToGrid {
 
     /// Rewrite every item’s `position` from its `gridColumn`/`gridRow`.
     /// Collapses consecutive empty rows to one, then empty indices use half pitch.
-    static func applyCompressedPositions(items: inout [LauncherItem], preferences: Preferences) {
+    static func applyCompressedPositions(items: inout [LauncherItem], settings: AppState.Settings) {
         collapseConsecutiveEmptyRows(items: &items)
         let occupiedRows = Set(items.map(\.gridRow))
         for i in items.indices {
-            items[i].position = CodablePoint(
+            items[i].position = .init(
                 positionForGrid(
                     row: items[i].gridRow,
                     column: items[i].gridColumn,
                     occupiedRows: occupiedRows,
-                    preferences: preferences
+                    settings: settings
                 )
             )
         }
@@ -78,24 +78,24 @@ enum SnapToGrid {
     static func applyAssignments(
         _ assignments: [UUID: Cell],
         to items: inout [LauncherItem],
-        preferences: Preferences
+        settings: AppState.Settings
     ) {
         for i in items.indices {
             guard let cell = assignments[items[i].id] else { continue }
             items[i].gridColumn = cell.column
             items[i].gridRow = cell.row
         }
-        applyCompressedPositions(items: &items, preferences: preferences)
+        applyCompressedPositions(items: &items, settings: settings)
     }
 
     /// Resolve an item’s grid cell: prefer stored coords; bootstrap from absolute position if unset.
-    static func cell(of item: LauncherItem, preferences: Preferences) -> Cell {
+    static func cell(of item: LauncherItem, settings: AppState.Settings) -> Cell {
         // Treat (0,0) with a non-origin position as “legacy / needs bootstrap” only when
         // position clearly isn’t at the (0,0) slot. Otherwise trust stored grid.
         if item.gridColumn != 0 || item.gridRow != 0 {
             return Cell(column: item.gridColumn, row: item.gridRow)
         }
-        let inferred = cell(for: item.position.cgPoint, preferences: preferences)
+        let inferred = cell(for: item.position.cgPoint, settings: settings)
         if inferred.column == 0 && inferred.row == 0 {
             return inferred
         }
@@ -108,18 +108,6 @@ enum SnapToGrid {
 
     // MARK: - Interactive layout
 
-    static func layout(items: [LauncherItem], preferences: Preferences, columns: Int = 6) -> [LauncherItem] {
-        var result = items
-        var assignments: [UUID: Cell] = [:]
-        for index in result.indices {
-            let col = index % max(columns, 1)
-            let row = index / max(columns, 1)
-            assignments[result[index].id] = Cell(column: col, row: row)
-        }
-        applyAssignments(assignments, to: &result, preferences: preferences)
-        return result
-    }
-
     /// Where `itemID` would land (drag ghost).
     /// Row pick uses distance to each strip’s **vertical center** (half-height empty rows
     /// included). Ghost is vertically centered in the landing strip. Origin row stays
@@ -128,29 +116,29 @@ enum SnapToGrid {
         itemID: UUID,
         proposed: CGPoint,
         items: [LauncherItem],
-        preferences: Preferences,
+        settings: AppState.Settings,
         canvasSize: CGSize
     ) -> CGRect {
         guard let plan = placementPlan(
             itemID: itemID,
             proposed: proposed,
             items: items,
-            preferences: preferences,
+            settings: settings,
             canvasSize: canvasSize
         ) else { return .null }
 
-        let w = TileMetrics.itemWidth(iconSize: preferences.iconSize)
-        let h = TileMetrics.itemHeight(iconSize: preferences.iconSize, labelSize: preferences.labelSize)
+        let w = TileMetrics.itemWidth(iconSize: settings.iconSize)
+        let h = TileMetrics.itemHeight(iconSize: settings.iconSize, labelSize: settings.labelSize)
         let top = positionForGrid(
             row: plan.landing.row,
             column: plan.landing.column,
             occupiedRows: plan.occupiedRowsForGeometry,
-            preferences: preferences
+            settings: settings
         )
         let rowH = rowHeight(
             row: plan.landing.row,
             occupiedRows: plan.occupiedRowsForGeometry,
-            preferences: preferences
+            settings: settings
         )
         // Center the ghost in the row strip (works for full and half-height rows).
         let centeredY = top.y + (rowH - h) / 2
@@ -161,7 +149,7 @@ enum SnapToGrid {
         itemID: UUID,
         proposed: CGPoint,
         items: [LauncherItem],
-        preferences: Preferences,
+        settings: AppState.Settings,
         canvasSize: CGSize
     ) -> [LauncherItem] {
         var result = items
@@ -169,13 +157,13 @@ enum SnapToGrid {
             itemID: itemID,
             proposed: proposed,
             items: items,
-            preferences: preferences,
+            settings: settings,
             canvasSize: canvasSize
         ) else { return items }
 
         var assignments = plan.assignments
         assignments[itemID] = plan.landing
-        applyAssignments(assignments, to: &result, preferences: preferences)
+        applyAssignments(assignments, to: &result, settings: settings)
         return result
     }
 
@@ -190,23 +178,23 @@ enum SnapToGrid {
         itemID: UUID,
         proposed: CGPoint,
         items: [LauncherItem],
-        preferences: Preferences,
+        settings: AppState.Settings,
         canvasSize: CGSize
     ) -> PlacementPlan? {
         guard let dragging = items.first(where: { $0.id == itemID }) else { return nil }
 
-        let bounds = gridBounds(canvasSize: canvasSize, preferences: preferences)
-        let originCell = cell(of: dragging, preferences: preferences)
+        let bounds = gridBounds(canvasSize: canvasSize, settings: settings)
+        let originCell = cell(of: dragging, settings: settings)
 
         // Geometry while dragging: origin row still occupied (matches on-screen layout).
-        var occupiedRowsForGeometry = Set(items.map { cell(of: $0, preferences: preferences).row })
+        var occupiedRowsForGeometry = Set(items.map { cell(of: $0, settings: settings).row })
         occupiedRowsForGeometry.insert(originCell.row)
 
         let target = clamp(
             cell(
                 for: proposed,
                 occupiedRows: occupiedRowsForGeometry,
-                preferences: preferences,
+                settings: settings,
                 bounds: bounds
             ),
             to: bounds
@@ -214,7 +202,7 @@ enum SnapToGrid {
 
         var assignments: [UUID: Cell] = [:]
         for item in items where item.id != itemID {
-            assignments[item.id] = cell(of: item, preferences: preferences)
+            assignments[item.id] = cell(of: item, settings: settings)
         }
         resolveDuplicateAssignments(bounds: bounds, assignments: &assignments)
         if assignments.values.contains(target) {
@@ -230,10 +218,10 @@ enum SnapToGrid {
         )
     }
 
-    static func rowHeight(row: Int, occupiedRows: Set<Int>, preferences: Preferences) -> CGFloat {
+    static func rowHeight(row: Int, occupiedRows: Set<Int>, settings: AppState.Settings) -> CGFloat {
         occupiedRows.contains(row)
-            ? fullRowHeight(preferences: preferences)
-            : emptyRowHeight(preferences: preferences)
+            ? fullRowHeight(settings: settings)
+            : emptyRowHeight(settings: settings)
     }
 
     private static func resolveDuplicateAssignments(bounds: Cell, assignments: inout [UUID: Cell]) {
@@ -339,17 +327,17 @@ enum SnapToGrid {
         }
     }
 
-    static func gridBounds(canvasSize: CGSize?, preferences: Preferences) -> Cell {
-        let size = cellSize(preferences: preferences)
+    static func gridBounds(canvasSize: CGSize?, settings: AppState.Settings) -> Cell {
+        let size = cellSize(settings: settings)
         // Bound drop rows using empty-row pitch so half-height strips remain addressable.
-        let emptyH = emptyRowHeight(preferences: preferences)
+        let emptyH = emptyRowHeight(settings: settings)
         guard let canvasSize, size.width > 0, emptyH > 0 else {
             return Cell(column: 5, row: 8)
         }
         let usableWidth = max(size.width, canvasSize.width - origin.x)
         let usableHeight = max(emptyH, canvasSize.height - origin.y)
-        let tileW = TileMetrics.itemWidth(iconSize: preferences.iconSize)
-        let tileH = TileMetrics.itemHeight(iconSize: preferences.iconSize, labelSize: preferences.labelSize)
+        let tileW = TileMetrics.itemWidth(iconSize: settings.iconSize)
+        let tileH = TileMetrics.itemHeight(iconSize: settings.iconSize, labelSize: settings.labelSize)
         let maxColumn = max(0, Int(floor((usableWidth - tileW) / size.width)))
         let maxRow = max(0, Int(floor((usableHeight - tileH) / emptyH)))
         return Cell(column: maxColumn, row: maxRow)
@@ -362,38 +350,20 @@ enum SnapToGrid {
         )
     }
 
-    static func nextOpenPosition(in collection: Collection, preferences: Preferences, canvasSize: CGSize? = nil) -> CGPoint {
-        let occupied = Set(collection.items.map { cell(of: $0, preferences: preferences) })
-        let bounds = gridBounds(canvasSize: canvasSize, preferences: preferences)
-        let free = nearestFreeCell(from: Cell(column: 0, row: 0), occupied: occupied, bounds: bounds)
-        var rows = Set(collection.items.map { cell(of: $0, preferences: preferences).row })
-        rows.insert(free.row)
-        return positionForGrid(row: free.row, column: free.column, occupiedRows: rows, preferences: preferences)
-    }
-
-    /// Uniform pitch (drop targeting only).
-    static func positionForGrid(row: Int, column: Int, preferences: Preferences) -> CGPoint {
-        let size = cellSize(preferences: preferences)
-        return CGPoint(
-            x: origin.x + Double(max(0, column)) * size.width,
-            y: origin.y + Double(max(0, row)) * size.height
-        )
-    }
-
     /// Sparse-row layout: empty row indices use half pitch.
     static func positionForGrid(
         row: Int,
         column: Int,
         occupiedRows: Set<Int>,
-        preferences: Preferences
+        settings: AppState.Settings
     ) -> CGPoint {
-        let size = cellSize(preferences: preferences)
+        let size = cellSize(settings: settings)
         var y = origin.y
         if row > 0 {
             for r in 0..<row {
                 y += occupiedRows.contains(r)
-                    ? fullRowHeight(preferences: preferences)
-                    : emptyRowHeight(preferences: preferences)
+                    ? fullRowHeight(settings: settings)
+                    : emptyRowHeight(settings: settings)
             }
         }
         return CGPoint(
@@ -403,8 +373,8 @@ enum SnapToGrid {
     }
 
     /// Uniform grid cell from a canvas point (legacy bootstrap only).
-    static func cell(for point: CGPoint, preferences: Preferences) -> Cell {
-        let size = cellSize(preferences: preferences)
+    static func cell(for point: CGPoint, settings: AppState.Settings) -> Cell {
+        let size = cellSize(settings: settings)
         guard size.width > 0, size.height > 0 else { return Cell(column: 0, row: 0) }
         let column = Int(round((point.x - origin.x) / size.width))
         let row = Int(round((point.y - origin.y) / size.height))
@@ -416,20 +386,20 @@ enum SnapToGrid {
     static func cell(
         for point: CGPoint,
         occupiedRows: Set<Int>,
-        preferences: Preferences,
+        settings: AppState.Settings,
         bounds: Cell
     ) -> Cell {
-        let size = cellSize(preferences: preferences)
+        let size = cellSize(settings: settings)
         guard size.width > 0 else { return Cell(column: 0, row: 0) }
         let column = Int(round((point.x - origin.x) / size.width))
-        let tileH = TileMetrics.itemHeight(iconSize: preferences.iconSize, labelSize: preferences.labelSize)
+        let tileH = TileMetrics.itemHeight(iconSize: settings.iconSize, labelSize: settings.labelSize)
         let probeY = point.y + tileH / 2
 
         var bestRow = 0
         var bestDist = CGFloat.greatestFiniteMagnitude
         var y = origin.y
         for row in 0...max(0, bounds.row) {
-            let h = rowHeight(row: row, occupiedRows: occupiedRows, preferences: preferences)
+            let h = rowHeight(row: row, occupiedRows: occupiedRows, settings: settings)
             let center = y + h / 2
             let dist = abs(probeY - center)
             if dist < bestDist {

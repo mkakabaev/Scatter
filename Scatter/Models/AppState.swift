@@ -1,57 +1,68 @@
 import Foundation
 
-struct Collection: Codable, Identifiable, Equatable {
-    var id: UUID
-    var name: String
-    var sortIndex: Int
-    var items: [LauncherItem]
+struct AppState: Codable, Equatable {
+    var collections: [Collection]
+    var settings: Settings
 
-    init(id: UUID = UUID(), name: String, sortIndex: Int, items: [LauncherItem] = []) {
-        self.id = id
-        self.name = name
-        self.sortIndex = sortIndex
-        self.items = items
+    enum CodingKeys: String, CodingKey {
+        case collections
+        /// JSON key remains `preferences` for compatibility with existing state files.
+        case settings = "preferences"
+    }
+
+    static let empty = AppState(collections: [], settings: .default)
+
+    struct Collection: Codable, Identifiable, Equatable {
+        var id: UUID
+        var name: String
+        var sortIndex: Int
+        var items: [LauncherItem]
+
+        init(id: UUID = UUID(), name: String, sortIndex: Int, items: [LauncherItem] = []) {
+            self.id = id
+            self.name = name
+            self.sortIndex = sortIndex
+            self.items = items
+        }
+    }
+
+    struct Settings: Equatable {
+        var backgroundColorHex: String
+        var iconSize: Double
+        var labelSize: Double
+        var gridSpacingHorizontal: Double
+        var gridSpacingVertical: Double
+        var selectedCollectionID: UUID?
+        /// Collection panel width. Restored on launch; see `SidebarLayout` for clamps.
+        var sidebarWidth: Double
+        var windowWidth: Double
+        var windowHeight: Double
+        /// IANA time zone (`America/Los_Angeles`). `nil` means the system zone — do not inject `TZ`.
+        var timeZoneIdentifier: String?
+        var launchAtLogin: Bool
+
+        static let `default` = Settings(
+            backgroundColorHex: "#1E1E1E",
+            iconSize: 64,
+            labelSize: 12,
+            gridSpacingHorizontal: 6,
+            gridSpacingVertical: 2,
+            selectedCollectionID: nil,
+            sidebarWidth: SidebarLayout.defaultWidth,
+            windowWidth: 1042,
+            windowHeight: 655,
+            timeZoneIdentifier: nil,
+            launchAtLogin: false
+        )
     }
 }
 
-struct Preferences: Equatable {
-    var backgroundColorHex: String
-    var iconSize: Double
-    var labelSize: Double
-    var gridSpacingHorizontal: Double
-    var gridSpacingVertical: Double
-    var selectedCollectionID: UUID?
-    /// Collection panel width. Restored on launch; see `SidebarLayout` for clamps.
-    var sidebarWidth: Double
-    var windowWidth: Double
-    var windowHeight: Double
-    var defaultOpenFoldersWithBundleID: String?
-    /// IANA time zone (`America/Los_Angeles`). `nil` means the system zone — do not inject `TZ`.
-    var timeZoneIdentifier: String?
-    var launchAtLogin: Bool
-
-    static let `default` = Preferences(
-        backgroundColorHex: "#1E1E1E",
-        iconSize: 64,
-        labelSize: 12,
-        gridSpacingHorizontal: 6,
-        gridSpacingVertical: 2,
-        selectedCollectionID: nil,
-        sidebarWidth: SidebarLayout.defaultWidth,
-        windowWidth: 1042,
-        windowHeight: 655,
-        defaultOpenFoldersWithBundleID: nil,
-        timeZoneIdentifier: nil,
-        launchAtLogin: false
-    )
-}
-
-extension Preferences: Codable {
+extension AppState.Settings: Codable {
     enum CodingKeys: String, CodingKey {
         case backgroundColorHex, iconSize, labelSize
         case gridSpacingHorizontal, gridSpacingVertical
         case selectedCollectionID, sidebarWidth, windowWidth, windowHeight
-        case defaultOpenFoldersWithBundleID, timeZoneIdentifier, launchAtLogin
+        case timeZoneIdentifier, launchAtLogin
     }
 
     init(from decoder: Decoder) throws {
@@ -67,7 +78,6 @@ extension Preferences: Codable {
         sidebarWidth = try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? Self.default.sidebarWidth
         windowWidth = try c.decodeIfPresent(Double.self, forKey: .windowWidth) ?? Self.default.windowWidth
         windowHeight = try c.decodeIfPresent(Double.self, forKey: .windowHeight) ?? Self.default.windowHeight
-        defaultOpenFoldersWithBundleID = try c.decodeIfPresent(String.self, forKey: .defaultOpenFoldersWithBundleID)
         timeZoneIdentifier = try c.decodeIfPresent(String.self, forKey: .timeZoneIdentifier)
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
     }
@@ -83,15 +93,7 @@ extension Preferences: Codable {
         try c.encode(sidebarWidth, forKey: .sidebarWidth)
         try c.encode(windowWidth, forKey: .windowWidth)
         try c.encode(windowHeight, forKey: .windowHeight)
-        try c.encodeIfPresent(defaultOpenFoldersWithBundleID, forKey: .defaultOpenFoldersWithBundleID)
         try c.encodeIfPresent(timeZoneIdentifier, forKey: .timeZoneIdentifier)
         try c.encode(launchAtLogin, forKey: .launchAtLogin)
     }
-}
-
-struct AppState: Codable, Equatable {
-    var collections: [Collection]
-    var preferences: Preferences
-
-    static let empty = AppState(collections: [], preferences: .default)
 }

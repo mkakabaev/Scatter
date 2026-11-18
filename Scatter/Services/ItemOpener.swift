@@ -9,16 +9,16 @@ struct DraggedWebLink {
 enum ItemOpener {
     /// Launch only — never modifies, updates, or deletes the target app/file/folder.
     /// Uses the item’s saved Open With app when set; otherwise the system default.
-    static func open(_ item: LauncherItem, preferences: Preferences, keepWindowOpen: Bool, store: AppStore) {
-        open(item, withApplicationAt: nil, preferences: preferences, keepWindowOpen: keepWindowOpen, store: store)
+    static func open(_ item: LauncherItem, settings: AppState.Settings, keepWindowOpen: Bool, store: AppStore) {
+        open(item, withApplicationAt: nil, settings: settings, keepWindowOpen: keepWindowOpen, store: store)
     }
 
-    /// Open with an explicit app (one-shot or after Always open in). `nil` uses saved Open With / system default.
+    /// Open with an explicit app (one-shot or after Always Open in). `nil` uses saved Open With / system default.
     /// Hides the launcher only after a successful open when `keepWindowOpen` is false. Failures keep/show the window with an alert.
     static func open(
         _ item: LauncherItem,
         withApplicationAt applicationURL: URL?,
-        preferences: Preferences,
+        settings: AppState.Settings,
         keepWindowOpen: Bool,
         store: AppStore
     ) {
@@ -53,7 +53,7 @@ enum ItemOpener {
         } else if item.kind == .app {
             resolvedOpenWith = nil
         } else {
-            resolvedOpenWith = resolveOpenWithApp(for: item, preferences: preferences)
+            resolvedOpenWith = resolveOpenWithApp(for: item)
         }
         if wantsOpenWith, item.kind != .app, resolvedOpenWith == nil {
             Task { @MainActor in
@@ -65,10 +65,10 @@ enum ItemOpener {
             return
         }
 
-        let configuration = openConfiguration(item: item, preferences: preferences)
+        let configuration = openConfiguration(item: item, settings: settings)
         let hideOnSuccess = !keepWindowOpen
         let injectsTimeZone = item.applyTimeZone
-            && !launchEnvironment(timeZoneIdentifier: preferences.timeZoneIdentifier).isEmpty
+            && !launchEnvironment(timeZoneIdentifier: settings.timeZoneIdentifier).isEmpty
 
         let finish: (Error?) -> Void = { error in
             Task { @MainActor in
@@ -321,7 +321,7 @@ enum ItemOpener {
         return ["TZ": timeZoneIdentifier]
     }
 
-    private static func missingTargetMessage(for kind: ItemKind) -> String {
+    private static func missingTargetMessage(for kind: LauncherItem.Kind) -> String {
         switch kind {
         case .folder:
             return "This folder no longer exists."
@@ -350,13 +350,13 @@ enum ItemOpener {
         FileManager.default.fileExists(atPath: url.path)
     }
 
-    private static func openConfiguration(item: LauncherItem, preferences: Preferences) -> NSWorkspace.OpenConfiguration {
+    private static func openConfiguration(item: LauncherItem, settings: AppState.Settings) -> NSWorkspace.OpenConfiguration {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         // Allow Gatekeeper / consent UI when needed (Finder shows these; silent openApplication often will not).
         configuration.promptsUserIfNeeded = true
         guard item.applyTimeZone else { return configuration }
-        let environment = launchEnvironment(timeZoneIdentifier: preferences.timeZoneIdentifier)
+        let environment = launchEnvironment(timeZoneIdentifier: settings.timeZoneIdentifier)
         if !environment.isEmpty {
             // Setting `environment` replaces inheritance — only attach when TZ injection is requested.
             configuration.environment = environment
@@ -404,7 +404,7 @@ enum ItemOpener {
         return "Open"
     }
 
-    static func resolveOpenWithApp(for item: LauncherItem, preferences: Preferences) -> URL? {
+    static func resolveOpenWithApp(for item: LauncherItem) -> URL? {
         if let bookmark = item.openWithBookmarkData {
             var stale = false
             if let url = try? URL(
@@ -492,14 +492,14 @@ enum ItemOpener {
                 kind: .url,
                 urlString: url.absoluteString,
                 displayName: webDisplayName(title: title, url: url),
-                position: CodablePoint(position)
+                position: .init(position)
             )
         }
 
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
 
-        let kind: ItemKind
+        let kind: LauncherItem.Kind
         if url.pathExtension.lowercased() == "app" || (isDir.boolValue && url.path.hasSuffix(".app")) {
             kind = .app
         } else if isDir.boolValue {
@@ -523,7 +523,7 @@ enum ItemOpener {
             bookmarkData: bookmark,
             urlString: url.absoluteString,
             displayName: name,
-            position: CodablePoint(position)
+            position: .init(position)
         )
     }
 }

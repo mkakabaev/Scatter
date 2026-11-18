@@ -5,7 +5,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
-    private var preferencesWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var store: AppStore!
     /// True while the launcher is key/front. Cleared on resign only after the current
     /// run-loop turn so status-item clicks (which resign key before the action) still
@@ -14,10 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = AppStore()
-        HotkeyManager.install(store: store)
         HotkeyManager.toggleHandler = { [weak self] in
             self?.toggleOrRaiseMainWindow()
         }
+        HotkeyManager.install()
         setupStatusItem()
         setupMainWindow()
         observeStore()
@@ -37,10 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// If the launcher is already on screen, make it key/front. No-op when hidden.
     /// Does not call `NSApp.activate` — main window is a nonactivating panel.
-    /// Skips while Preferences is up so activate-for-prefs does not bury Preferences under the panel.
+    /// Skips while Settings is up so activate-for-settings does not bury Settings under the panel.
     private func raiseMainWindowIfVisible() {
         guard !store.isLaunchingExternalApp else { return }
-        if let prefs = preferencesWindow, prefs.isVisible { return }
+        if let settings = settingsWindow, settings.isVisible { return }
         guard store.isMainWindowVisible, let window = mainWindow, window.isVisible else { return }
         bringMainWindowToFront()
     }
@@ -120,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(parent)
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
+        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Show \(AppIdentity.displayName)", action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit \(AppIdentity.displayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let raw = sender.representedObject as? String,
               let id = UUID(uuidString: raw),
               let item = store.findItem(id) else { return }
-        ItemOpener.open(item, preferences: store.state.preferences, keepWindowOpen: true, store: store)
+        ItemOpener.open(item, settings: store.state.settings, keepWindowOpen: true, store: store)
     }
 
     @objc private func showWindow() {
@@ -145,8 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openPreferences() {
-        store.requestPreferences()
+    @objc private func openSettings() {
+        store.requestSettings()
     }
 
     private func setupMainWindow() {
@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environmentObject(store)
         let hosting = NSHostingController(rootView: root)
         let window = LauncherWindow(
-            contentRect: NSRect(x: 0, y: 0, width: store.state.preferences.windowWidth, height: store.state.preferences.windowHeight),
+            contentRect: NSRect(x: 0, y: 0, width: store.state.settings.windowWidth, height: store.state.settings.windowHeight),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -186,8 +186,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyRestoredContentSize(to window: NSWindow) {
-        let width = max(640, store.state.preferences.windowWidth)
-        let height = max(400, store.state.preferences.windowHeight)
+        let width = max(640, store.state.settings.windowWidth)
+        let height = max(400, store.state.settings.windowHeight)
         window.setContentSize(NSSize(width: width, height: height))
     }
 
@@ -211,9 +211,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    private func showPreferencesWindow() {
-        if preferencesWindow == nil {
-            let root = PreferencesView()
+    private func showSettingsWindow() {
+        if settingsWindow == nil {
+            let root = SettingsView()
                 .environmentObject(store)
             let hosting = NSHostingController(rootView: root)
             let window = NSWindow(
@@ -222,13 +222,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "\(AppIdentity.displayName) Preferences"
+            window.title = "\(AppIdentity.displayName) Settings"
             window.contentViewController = hosting
             window.isReleasedWhenClosed = false
             window.delegate = self
-            preferencesWindow = window
+            settingsWindow = window
         }
-        guard let window = preferencesWindow else { return }
+        guard let window = settingsWindow else { return }
         window.layoutIfNeeded()
         centerOnActiveScreen(window)
         // Sit above the nonactivating main panel (same level is not enough after orderFrontRegardless).
@@ -254,8 +254,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hideMain: { [weak self] in
                 self?.mainWindow?.orderOut(nil)
             },
-            showPrefs: { [weak self] in
-                self?.showPreferencesWindow()
+            showSettings: { [weak self] in
+                self?.showSettingsWindow()
             }
         )
     }
@@ -266,7 +266,7 @@ extension AppDelegate: NSWindowDelegate {
         if notification.object as? NSWindow === mainWindow {
             store.hideMainWindow()
         }
-        // Preferences stays allocated (`isReleasedWhenClosed = false`); next request re-fronts it.
+        // Settings stays allocated (`isReleasedWhenClosed = false`); next request re-fronts it.
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -292,7 +292,7 @@ extension AppDelegate: NSWindowDelegate {
         let content = window.contentLayoutRect
         let width = max(window.contentView?.bounds.width ?? content.width, content.width)
         let height = max(window.contentView?.bounds.height ?? content.height, content.height)
-        store.updatePreferences {
+        store.updateSettings {
             $0.windowWidth = width
             $0.windowHeight = height
         }
@@ -328,20 +328,20 @@ final class MainActorWindowBridge {
     static let shared = MainActorWindowBridge()
     private var task: Task<Void, Never>?
     private var lastVisible = false
-    private var lastPrefsRequestID = 0
+    private var lastSettingsRequestID = 0
 
-    func attach(store: AppStore, showMain: @escaping () -> Void, hideMain: @escaping () -> Void, showPrefs: @escaping () -> Void) {
+    func attach(store: AppStore, showMain: @escaping () -> Void, hideMain: @escaping () -> Void, showSettings: @escaping () -> Void) {
         task?.cancel()
-        lastPrefsRequestID = store.preferencesRequestID
+        lastSettingsRequestID = store.settingsRequestID
         task = Task {
             while !Task.isCancelled {
                 if store.isMainWindowVisible != lastVisible {
                     lastVisible = store.isMainWindowVisible
                     if lastVisible { showMain() } else { hideMain() }
                 }
-                if store.preferencesRequestID != lastPrefsRequestID {
-                    lastPrefsRequestID = store.preferencesRequestID
-                    showPrefs()
+                if store.settingsRequestID != lastSettingsRequestID {
+                    lastSettingsRequestID = store.settingsRequestID
+                    showSettings()
                 }
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }

@@ -92,7 +92,7 @@ struct SearchOverlayView: View {
         if flags.contains(.command) {
             ItemOpener.reveal(hit.item, keepWindowOpen: keepOpen, store: store)
         } else {
-            ItemOpener.open(hit.item, preferences: store.state.preferences, keepWindowOpen: keepOpen, store: store)
+            ItemOpener.open(hit.item, settings: store.state.settings, keepWindowOpen: keepOpen, store: store)
         }
         if !keepOpen {
             store.clearSearch()

@@ -1,40 +1,29 @@
 import Foundation
 import CoreGraphics
 
-enum ItemKind: String, Codable, CaseIterable {
-    case app
-    case file
-    case folder
-    case url
-}
-
-struct SearchHit: Identifiable, Equatable {
-    var id: UUID { item.id }
-    var item: LauncherItem
-    var collectionID: UUID
-    var collectionName: String
-}
-
-struct CodablePoint: Codable, Equatable {
-    var x: Double
-    var y: Double
-
-    var cgPoint: CGPoint { CGPoint(x: x, y: y) }
-
-    init(_ point: CGPoint) {
-        x = point.x
-        y = point.y
-    }
-
-    init(x: Double, y: Double) {
-        self.x = x
-        self.y = y
-    }
-}
-
 struct LauncherItem: Codable, Identifiable, Equatable {
+
+    enum Kind: String, Codable {
+        case app
+        case file
+        case folder
+        case url
+    }
+
+    struct CodablePoint: Codable, Equatable {
+        var x: Double
+        var y: Double
+
+        var cgPoint: CGPoint { CGPoint(x: x, y: y) }
+
+        init(_ point: CGPoint) {
+            x = point.x
+            y = point.y
+        }
+    }
+
     var id: UUID
-    var kind: ItemKind
+    var kind: Kind
     var bookmarkData: Data?
     var urlString: String?
     var displayName: String
@@ -44,16 +33,14 @@ struct LauncherItem: Codable, Identifiable, Equatable {
     var gridRow: Int
     var openWithBookmarkData: Data?
     var openWithBundleIdentifier: String?
-    /// Tile fill. `nil` leaves the tile clear. Palette swatches or any `#RRGGBB` from the screen sampler.
     var backgroundColorHex: String?
-    /// When true, launch injects `TZ` from Preferences. Default off.
     var applyTimeZone: Bool
     /// Favicon PNG for a URL item. `nil` uses the generic HTML icon.
     var iconPNGData: Data?
 
     init(
         id: UUID = UUID(),
-        kind: ItemKind,
+        kind: Kind,
         bookmarkData: Data? = nil,
         urlString: String? = nil,
         displayName: String,
@@ -91,7 +78,7 @@ struct LauncherItem: Codable, Identifiable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        kind = try c.decode(ItemKind.self, forKey: .kind)
+        kind = try c.decode(Kind.self, forKey: .kind)
         bookmarkData = try c.decodeIfPresent(Data.self, forKey: .bookmarkData)
         urlString = try c.decodeIfPresent(String.self, forKey: .urlString)
         displayName = try c.decode(String.self, forKey: .displayName)

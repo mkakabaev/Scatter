@@ -3,7 +3,7 @@ import SwiftUI
 struct CollectionSidebar: View {
     @EnvironmentObject private var store: AppStore
     var onRequestNew: () -> Void
-    var onRequestRename: (Collection) -> Void
+    var onRequestRename: (AppState.Collection) -> Void
 
     @State private var draggingCollectionID: UUID?
     @State private var dragTranslation: CGFloat = 0
@@ -58,7 +58,7 @@ struct CollectionSidebar: View {
         }
     }
 
-    private func collectionRow(_ collection: Collection) -> some View {
+    private func collectionRow(_ collection: AppState.Collection) -> some View {
         HStack {
             Text(collection.name)
                 .foregroundStyle(.white.opacity(0.9))
@@ -105,7 +105,7 @@ struct CollectionSidebar: View {
         }
     }
 
-    private func reorderGesture(for collection: Collection) -> some Gesture {
+    private func reorderGesture(for collection: AppState.Collection) -> some Gesture {
         DragGesture(minimumDistance: 6, coordinateSpace: .named("collection-sidebar"))
             .onChanged { value in
                 draggingCollectionID = collection.id

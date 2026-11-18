@@ -18,10 +18,11 @@
 		58EEAE88CB4E89BC752FB348 /* SidebarLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D014A09EE92053C06A6603 /* SidebarLayout.swift */; };
 		647F9245D0444E3882F01824 /* ColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3625DF2ADA95B84AEEC25450 /* ColorHex.swift */; };
 		6589FE9DBDD63C0D5C4085D0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 631F4007B797BA34F6D7A4DC /* Assets.xcassets */; };
+		7322F7E0AE226D0C2A2B972B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C1A6B639FA664FA40FB364 /* SettingsView.swift */; };
 		7727B5F8BE92B82E12B95886 /* FaviconFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F52546CCB2B217A54B8C524 /* FaviconFetcher.swift */; };
 		8378E9C15053585B551C58B5 /* WindowBackgroundDragView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150CDDEF2D81937371444055 /* WindowBackgroundDragView.swift */; };
-		8837A13E596434B4C7995F69 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79B0962444205CE3B4472C31 /* PreferencesView.swift */; };
 		907EFDC3E3ED3A891BBEE417 /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBC7706031E3C496AD80F5F /* MainWindowView.swift */; };
+		9D10F27101298D304E19AD61 /* SearchHit.swift in Sources */ = {isa = PBXBuildFile; fileRef = F23D91DC1FBCD57952D1C831 /* SearchHit.swift */; };
 		B0A1266F6CD322E9259B976C /* SearchOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04D630646F83650759A15C9 /* SearchOverlayView.swift */; };
 		B193AB4D1BE5F35E125FE521 /* TileMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2360A68F35F885CBADED16D6 /* TileMetrics.swift */; };
 		B60C2D1947947C0ACF8CA500 /* CollectionSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 907748FC4A5AF324475E4781 /* CollectionSidebar.swift */; };
@@ -41,6 +42,7 @@
 /* Begin PBXFileReference section */
 		04F4BBF53DFA72A7CE963459 /* OpenWithPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWithPanel.swift; sourceTree = "<group>"; };
 		150CDDEF2D81937371444055 /* WindowBackgroundDragView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowBackgroundDragView.swift; sourceTree = "<group>"; };
+		19C1A6B639FA664FA40FB364 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		2360A68F35F885CBADED16D6 /* TileMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileMetrics.swift; sourceTree = "<group>"; };
 		34CA15542A5014170AC4C24E /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		352B932B5D9149204DCDE002 /* BrowserLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLocator.swift; sourceTree = "<group>"; };
@@ -51,7 +53,6 @@
 		4FB18B6D73680267A2DB64D6 /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
 		631F4007B797BA34F6D7A4DC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		73439A9E375583E5EF9EB3A3 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
-		79B0962444205CE3B4472C31 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
 		7A970F47DFE7EB87E4432E85 /* LauncherItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherItemView.swift; sourceTree = "<group>"; };
 		7E2BC253B799C4B752FE578E /* ItemBackgroundPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemBackgroundPicker.swift; sourceTree = "<group>"; };
 		7F52546CCB2B217A54B8C524 /* FaviconFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconFetcher.swift; sourceTree = "<group>"; };
@@ -70,6 +71,7 @@
 		F0CE881BC0C749E89CF76521 /* Scatter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Scatter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F0D107EE4674B2997566A6EA /* ItemOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemOpener.swift; sourceTree = "<group>"; };
 		F1C53DBE148B3C27511929BE /* SnapToGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapToGrid.swift; sourceTree = "<group>"; };
+		F23D91DC1FBCD57952D1C831 /* SearchHit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchHit.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -132,8 +134,8 @@
 				AFB482A6AD8F58D8E60A5AAA /* KeyMonitor.swift */,
 				7A970F47DFE7EB87E4432E85 /* LauncherItemView.swift */,
 				9FBC7706031E3C496AD80F5F /* MainWindowView.swift */,
-				79B0962444205CE3B4472C31 /* PreferencesView.swift */,
 				B04D630646F83650759A15C9 /* SearchOverlayView.swift */,
+				19C1A6B639FA664FA40FB364 /* SettingsView.swift */,
 				150CDDEF2D81937371444055 /* WindowBackgroundDragView.swift */,
 			);
 			path = Views;
@@ -144,6 +146,7 @@
 			children = (
 				73439A9E375583E5EF9EB3A3 /* AppState.swift */,
 				4A66DDD80BDDDA90ADD07147 /* LauncherItem.swift */,
+				F23D91DC1FBCD57952D1C831 /* SearchHit.swift */,
 				4FB18B6D73680267A2DB64D6 /* Store.swift */,
 			);
 			path = Models;
@@ -269,8 +272,9 @@
 				54A1F9DEFA3869978B9993A0 /* LoginItemManager.swift in Sources */,
 				907EFDC3E3ED3A891BBEE417 /* MainWindowView.swift in Sources */,
 				EAC737FA99ACB898C71A17D2 /* OpenWithPanel.swift in Sources */,
-				8837A13E596434B4C7995F69 /* PreferencesView.swift in Sources */,
+				9D10F27101298D304E19AD61 /* SearchHit.swift in Sources */,
 				B0A1266F6CD322E9259B976C /* SearchOverlayView.swift in Sources */,
+				7322F7E0AE226D0C2A2B972B /* SettingsView.swift in Sources */,
 				58EEAE88CB4E89BC752FB348 /* SidebarLayout.swift in Sources */,
 				D81C6444127EE4B2A55938A2 /* SnapToGrid.swift in Sources */,
 				3F13BC56BF067B441E32B92B /* Store.swift in Sources */,

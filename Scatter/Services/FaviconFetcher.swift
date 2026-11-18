@@ -16,6 +16,7 @@ enum FaviconFetcher {
     }()
 
     private static let htmlByteLimit = 256 * 1024
+    private static let manifestByteLimit = 64 * 1024
     private static let imageByteLimit = 1_500_000
     /// Largest side stored. 128 pt tiles at 2x need 256 px; anything bigger is scaled down, never up.
     private static let maxIconPixels = 256
@@ -30,9 +31,19 @@ enum FaviconFetcher {
                 return rendered.png
             }
             if let html = String(data: page.data, encoding: .utf8) ?? String(data: page.data, encoding: .isoLatin1) {
-                candidates = iconURLs(in: html, base: page.finalURL)
+                // Manifest icons first: sites like ya.ru ship 512px there and only soft 192px in <link>.
+                if let manifest = manifestURL(in: html, base: page.finalURL) {
+                    candidates.append(contentsOf: await manifestIconURLs(from: manifest))
+                }
+                candidates.append(contentsOf: iconURLs(in: html, base: page.finalURL))
             }
-            if let fallback = faviconURL(from: page.finalURL) {
+            // Always try the dropped URL's /favicon.ico. Auth/SSO redirects change finalURL,
+            // and that host's icon is often useless while the original origin still serves one.
+            if let fallback = faviconURL(from: pageURL) {
+                candidates.append(fallback)
+            }
+            // After a host change (apex → www, etc.), also try the final host.
+            if !sameHost(pageURL, page.finalURL), let fallback = faviconURL(from: page.finalURL) {
                 candidates.append(fallback)
             }
         } else if let fallback = faviconURL(from: pageURL) {
@@ -110,6 +121,78 @@ enum FaviconFetcher {
         } catch {
             return nil
         }
+    }
+
+    private static func downloadManifest(_ url: URL) async -> Data? {
+        guard isHTTP(url) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        request.setValue(
+            "application/manifest+json,application/json;q=0.9,*/*;q=0.5",
+            forHTTPHeaderField: "Accept"
+        )
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+            guard !data.isEmpty, data.count <= manifestByteLimit else { return nil }
+            return data
+        } catch {
+            NSLog("Manifest obtain failed: \(error)")
+            return nil
+        }
+    }
+
+    /// `rel=manifest` href from the page, if any.
+    private static func manifestURL(in html: String, base: URL) -> URL? {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"<link\b(?:[^>"']|"[^"]*"|'[^']*')*>"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+
+        let ns = html as NSString
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let tag = ns.substring(with: match.range)
+            let attrs = attributes(in: tag)
+            guard let rel = attrs["rel"]?.lowercased() else { continue }
+            let tokens = rel.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            guard tokens.contains("manifest"), let href = attrs["href"] else { continue }
+            let decoded = href
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !decoded.isEmpty, !decoded.lowercased().hasPrefix("data:") else { continue }
+            guard let resolved = URL(string: decoded, relativeTo: base)?.absoluteURL, isHTTP(resolved) else {
+                continue
+            }
+            return resolved
+        }
+        return nil
+    }
+
+    /// Icons from a web app manifest, largest declared size first. Skips SVG and monochrome entries.
+    private static func manifestIconURLs(from manifestURL: URL) async -> [URL] {
+        guard let data = await downloadManifest(manifestURL) else { return [] }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let icons = root["icons"] as? [[String: Any]] else { return [] }
+
+        var refs: [IconRef] = []
+        for icon in icons {
+            guard let src = icon["src"] as? String else { continue }
+            let decoded = src.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !decoded.isEmpty, !decoded.lowercased().hasPrefix("data:") else { continue }
+            let type = (icon["type"] as? String)?.lowercased() ?? ""
+            if decoded.lowercased().hasSuffix(".svg") || type.contains("svg") { continue }
+            if let purpose = icon["purpose"] as? String {
+                let tokens = purpose.lowercased().split(whereSeparator: { $0.isWhitespace })
+                if tokens.contains("monochrome") { continue }
+            }
+            // Relative paths resolve against the manifest URL per the Web App Manifest spec.
+            guard let resolved = URL(string: decoded, relativeTo: manifestURL)?.absoluteURL, isHTTP(resolved) else {
+                continue
+            }
+            let sizes = icon["sizes"] as? String ?? ""
+            refs.append(IconRef(url: resolved, declaredSize: largestSize(sizes)))
+        }
+        return orderedIconURLs(refs)
     }
 
     private static func iconURLs(in html: String, base: URL) -> [URL] {
@@ -252,5 +335,10 @@ enum FaviconFetcher {
     private static func isHTTP(_ url: URL) -> Bool {
         let scheme = url.scheme?.lowercased()
         return scheme == "http" || scheme == "https"
+    }
+
+    private static func sameHost(_ a: URL, _ b: URL) -> Bool {
+        guard let left = a.host?.lowercased(), let right = b.host?.lowercased() else { return false }
+        return left == right
     }
 }

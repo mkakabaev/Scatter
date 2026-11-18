@@ -36,7 +36,7 @@ Cursor gets first-class treatment: it’s offered on drop, resolved reliably if 
 
 ### Time zone injection
 
-Some apps care about `TZ`. Scatter can launch them with a preferred time zone injected into the environment — opt-in per item, with the zone chosen in Preferences.
+Some apps care about `TZ`. Scatter can launch them with a preferred time zone injected into the environment — opt-in per item, with the zone chosen in Settings.
 
 Useful when you want one app to behave as if it’s in another city without changing the system clock.
 

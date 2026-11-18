@@ -12,7 +12,7 @@ struct MainWindowView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color(nsColor: NSColor(hex: store.state.preferences.backgroundColorHex) ?? .black)
+            Color(nsColor: NSColor(hex: store.state.settings.backgroundColorHex) ?? .black)
 
             GeometryReader { geo in
                 let width = sidebarWidth(in: geo.size.width)
@@ -31,7 +31,7 @@ struct MainWindowView: View {
                         containerWidth: geo.size.width,
                         onChange: { sidebarWidthOverride = $0 },
                         onEnd: { final in
-                            store.updatePreferences { $0.sidebarWidth = final }
+                            store.updateSettings { $0.sidebarWidth = final }
                             sidebarWidthOverride = nil
                         }
                     )
@@ -45,7 +45,7 @@ struct MainWindowView: View {
 
             // Flush with window top-trailing (opposite traffic lights).
             Button {
-                store.requestPreferences()
+                store.requestSettings()
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 12, weight: .semibold))
@@ -54,7 +54,7 @@ struct MainWindowView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Preferences")
+            .help("Settings")
             .padding(.top, 6)
             .padding(.trailing, 8)
             .opacity(store.isSearching ? 0.35 : 1)
@@ -110,7 +110,7 @@ struct MainWindowView: View {
     }
 
     private func sidebarWidth(in containerWidth: CGFloat) -> CGFloat {
-        let stored = sidebarWidthOverride ?? store.state.preferences.sidebarWidth
+        let stored = sidebarWidthOverride ?? store.state.settings.sidebarWidth
         return CGFloat(SidebarLayout.clamped(stored, containerWidth: Double(containerWidth)))
     }
 
@@ -155,7 +155,7 @@ struct MainWindowView: View {
             }
             if let chars = event.charactersIgnoringModifiers {
                 if chars == "," {
-                    store.requestPreferences()
+                    store.requestSettings()
                     return nil
                 }
                 if let number = Int(chars), (1...9).contains(number) {
@@ -171,7 +171,7 @@ struct MainWindowView: View {
             return nil
         case 36, 76: // return
             if let id = store.selectedItemID, let item = store.findItem(id) {
-                ItemOpener.open(item, preferences: store.state.preferences, keepWindowOpen: false, store: store)
+                ItemOpener.open(item, settings: store.state.settings, keepWindowOpen: false, store: store)
             }
             return nil
         case 123, 124, 125, 126: // arrows — canvas neighbor selection
@@ -209,7 +209,7 @@ struct MainWindowView: View {
                 if event.modifierFlags.contains(.command) {
                     ItemOpener.reveal(hit.item, keepWindowOpen: keepOpen, store: store)
                 } else {
-                    ItemOpener.open(hit.item, preferences: store.state.preferences, keepWindowOpen: keepOpen, store: store)
+                    ItemOpener.open(hit.item, settings: store.state.settings, keepWindowOpen: keepOpen, store: store)
                 }
                 if !keepOpen { store.clearSearch() }
                 return nil
