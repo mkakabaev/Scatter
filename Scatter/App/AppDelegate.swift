@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowIsFrontmost = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // macOS 26+ injects SF Symbols onto standard menu actions (Settings → gear, Quit, …).
+        // Opt out so Quick Access stays text-only; clearing `image` after the fact still flashes.
+        UserDefaults.standard.set(false, forKey: "NSMenuEnableActionImages")
+
         store = AppStore()
         HotkeyManager.toggleHandler = { [weak self] in
             self?.toggleOrRaiseMainWindow()
@@ -26,6 +30,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         store.showMainWindow()
         return true
+    }
+
+    /// Menu-bar app: never open an untitled/placeholder window (the empty SwiftUI Settings stub).
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    /// App menu / ⌘, — routed from `AppMain` so the SwiftUI Settings scene stays closed.
+    func openSettingsFromMenu() {
+        store.requestSettings()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -170,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (avoid double-compositing the same alpha on window + content).
         hosting.view.wantsLayer = true
         hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
+        hosting.view.focusRingType = .none
         window.contentViewController = hosting
         window.delegate = self
         window.isOpaque = false
@@ -222,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "\(AppIdentity.displayName) Settings"
+            window.title = "Settings"
             window.contentViewController = hosting
             window.isReleasedWhenClosed = false
             window.delegate = self

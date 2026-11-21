@@ -106,7 +106,10 @@ struct MainWindowView: View {
                 }
             }
         }
+        // Accept keyboard focus for type-to-search / arrows; no system focus ring
+        // (that blue rect flashes around the content, especially during live resize).
         .focusable()
+        .focusEffectDisabled()
     }
 
     private func sidebarWidth(in containerWidth: CGFloat) -> CGFloat {

@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 import AppKit
 
 struct FreeformCanvasView: View {
@@ -14,7 +13,15 @@ struct FreeformCanvasView: View {
 
     private struct PendingDrop: Identifiable {
         let id = UUID()
-        let item: LauncherItem
+        let items: [LauncherItem]
+
+        init(items: [LauncherItem]) {
+            self.items = items
+        }
+
+        init(item: LauncherItem) {
+            self.items = [item]
+        }
     }
 
     private var iconSize: CGFloat { store.state.settings.iconSize }
@@ -39,13 +46,16 @@ struct FreeformCanvasView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                WindowBackgroundDragView {
-                    store.selectedItemID = nil
-                }
+                WindowBackgroundDragView(
+                    onClick: { store.selectedItemID = nil },
+                    contextMenuItems: [
+                        .init(title: "Add…") { point in pickAndAdd(at: point) },
+                    ],
+                    onURLsDropped: { urls, point in
+                        handleCanvasURLs(urls, at: point)
+                    }
+                )
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                .onDrop(of: [.fileURL, .url, .plainText], isTargeted: nil) { providers, location in
-                    handleCanvasDrop(providers, at: location)
-                }
 
                 if let dropTargetFrame, dropTargetFrame != .null {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -152,16 +162,42 @@ struct FreeformCanvasView: View {
     }
 
     private var openChoiceTitle: String {
-        if let name = pendingDrop?.item.displayName {
-            return "Open “\(name)”"
+        guard let items = pendingDrop?.items, let first = items.first else {
+            return "Open With"
         }
-        return "Open With"
+        if items.count == 1 {
+            return "Open “\(first.displayName)”"
+        }
+        return "Open \(items.count) Items"
     }
 
     private func commitPendingDrop(openWithCursor: Bool) {
         guard let pending = pendingDrop else { return }
-        store.addItemFromFinder(pending.item, openWithCursor: openWithCursor)
+        for item in pending.items {
+            store.addItemFromFinder(item, openWithCursor: openWithCursor)
+        }
         pendingDrop = nil
+    }
+
+    /// `canvasPoint` is the right-click location in the empty-canvas view (tile centers on it, same as drop).
+    private func pickAndAdd(at canvasPoint: CGPoint) {
+        let dropPoint = CGPoint(
+            x: max(0, canvasPoint.x - itemWidth / 2),
+            y: max(0, canvasPoint.y - itemHeight / 2)
+        )
+        guard let urls = AddItemsPanel.run() else { return }
+        var awaitingOpenChoice: [LauncherItem] = []
+        for url in urls {
+            guard let item = ItemOpener.makeItem(from: url, at: dropPoint) else { continue }
+            if item.kind == .file || item.kind == .folder {
+                awaitingOpenChoice.append(item)
+            } else {
+                store.addItemFromFinder(item, openWithCursor: false)
+            }
+        }
+        if !awaitingOpenChoice.isEmpty {
+            pendingDrop = PendingDrop(items: awaitingOpenChoice)
+        }
     }
 
     private func handleClick(_ item: LauncherItem) {
@@ -354,66 +390,27 @@ struct FreeformCanvasView: View {
         )
     }
 
-    private func handleCanvasDrop(_ providers: [NSItemProvider], at location: CGPoint) -> Bool {
-        let dropPoint = CGPoint(x: max(0, location.x - itemWidth / 2), y: max(0, location.y - itemHeight / 2))
-        // Safari (and Chrome) put the link on the drag pasteboard as public.url, with the page title in public.url-name.
-        // Safari's item provider is a .webloc file promise, so loadItem(public.file-url) never yields the http URL.
-        if let link = ItemOpener.draggedWebLink(), !providers.contains(where: hasRealFileURL) {
-            ingestDroppedURL(link.url, at: dropPoint, title: link.title)
-            return true
-        }
-
+    /// AppKit canvas drop: `location` is in the empty-canvas view (flipped).
+    private func handleCanvasURLs(_ urls: [URL], at location: CGPoint) {
+        let dropPoint = CGPoint(
+            x: max(0, location.x - itemWidth / 2),
+            y: max(0, location.y - itemHeight / 2)
+        )
         let title = ItemOpener.draggedWebTitle()
-        var handled = false
-        for provider in providers {
-            if hasRealFileURL(provider) {
-                handled = true
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    let url = Self.url(from: data)
-                    guard let url else { return }
-                    Task { @MainActor in
-                        ingestDroppedURL(url, at: dropPoint, title: title)
-                    }
-                }
-            } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-                handled = true
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in
-                        ingestDroppedURL(url, at: dropPoint, title: title)
-                    }
-                }
+        var awaitingOpenChoice: [LauncherItem] = []
+        for url in urls {
+            let linkTitle = url.isFileURL ? title : (ItemOpener.draggedWebLink()?.title ?? title)
+            guard let item = ItemOpener.makeItem(from: url, at: dropPoint, title: linkTitle) else { continue }
+            if item.kind == .file || item.kind == .folder {
+                awaitingOpenChoice.append(item)
+            } else if item.kind == .url {
+                store.addWebLink(item)
+            } else {
+                store.addItemFromFinder(item, openWithCursor: false)
             }
         }
-        return handled
-    }
-
-    /// A file already on disk. Safari link drags are file promises, not file URLs.
-    private func hasRealFileURL(_ provider: NSItemProvider) -> Bool {
-        guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { return false }
-        let promiseTypes = NSFilePromiseReceiver.readableDraggedTypes
-        return !promiseTypes.contains { provider.hasItemConformingToTypeIdentifier($0) }
-    }
-
-    private func ingestDroppedURL(_ url: URL, at dropPoint: CGPoint, title: String? = nil) {
-        guard let item = ItemOpener.makeItem(from: url, at: dropPoint, title: title) else { return }
-        // Ask how to open files/folders by default; apps/URLs use system default.
-        if item.kind == .file || item.kind == .folder {
-            pendingDrop = PendingDrop(item: item)
-        } else if item.kind == .url {
-            store.addWebLink(item)
-        } else {
-            store.addItemFromFinder(item, openWithCursor: false)
+        if !awaitingOpenChoice.isEmpty {
+            pendingDrop = PendingDrop(items: awaitingOpenChoice)
         }
-    }
-
-    private static func url(from data: NSSecureCoding?) -> URL? {
-        if let url = data as? URL { return url }
-        if let data = data as? Data {
-            if let url = URL(dataRepresentation: data, relativeTo: nil) { return url }
-            if let str = String(data: data, encoding: .utf8) { return URL(string: str) }
-        }
-        if let str = data as? String { return URL(string: str) }
-        return nil
     }
 }

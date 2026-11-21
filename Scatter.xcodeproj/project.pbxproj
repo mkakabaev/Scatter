@@ -16,6 +16,7 @@
 		3F13BC56BF067B441E32B92B /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FB18B6D73680267A2DB64D6 /* Store.swift */; };
 		54A1F9DEFA3869978B9993A0 /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8938ECF89184377DD4870A9 /* LoginItemManager.swift */; };
 		58EEAE88CB4E89BC752FB348 /* SidebarLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D014A09EE92053C06A6603 /* SidebarLayout.swift */; };
+		5DBCCC596900E24B88C1F505 /* AddItemsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A7D292FF8672AD3DC232DF /* AddItemsPanel.swift */; };
 		647F9245D0444E3882F01824 /* ColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3625DF2ADA95B84AEEC25450 /* ColorHex.swift */; };
 		6589FE9DBDD63C0D5C4085D0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 631F4007B797BA34F6D7A4DC /* Assets.xcassets */; };
 		7322F7E0AE226D0C2A2B972B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C1A6B639FA664FA40FB364 /* SettingsView.swift */; };
@@ -64,6 +65,7 @@
 		ABABE689BBFAF1B6DFC2BE97 /* AppIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentity.swift; sourceTree = "<group>"; };
 		AFB482A6AD8F58D8E60A5AAA /* KeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyMonitor.swift; sourceTree = "<group>"; };
 		B04D630646F83650759A15C9 /* SearchOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchOverlayView.swift; sourceTree = "<group>"; };
+		B8A7D292FF8672AD3DC232DF /* AddItemsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddItemsPanel.swift; sourceTree = "<group>"; };
 		BB183AB2680419761B8F06CB /* Scatter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Scatter.entitlements; sourceTree = "<group>"; };
 		DD34F2881CE2C64129FF6E2C /* IconProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconProvider.swift; sourceTree = "<group>"; };
 		E4D014A09EE92053C06A6603 /* SidebarLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarLayout.swift; sourceTree = "<group>"; };
@@ -101,6 +103,7 @@
 		54D3EFE17751860E1ED65A50 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				B8A7D292FF8672AD3DC232DF /* AddItemsPanel.swift */,
 				352B932B5D9149204DCDE002 /* BrowserLocator.swift */,
 				3625DF2ADA95B84AEEC25450 /* ColorHex.swift */,
 				3A9B61C0F009E0405834FABB /* CursorLocator.swift */,
@@ -211,8 +214,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 5AB87E8297D98F5FCC1806E4 /* Build configuration list for PBXProject "Scatter" */;
 			developmentRegion = en;
@@ -252,6 +253,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5DBCCC596900E24B88C1F505 /* AddItemsPanel.swift in Sources */,
 				E7F7BEC1832EAB52BE4D47FA /* AppDelegate.swift in Sources */,
 				0FE2E78321B7D9996089758F /* AppIdentity.swift in Sources */,
 				C9BF019505C90B6BBAF69AFF /* AppMain.swift in Sources */,
@@ -298,7 +300,10 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Scatter/Resources/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kakabaev.scatter;
 				PRODUCT_NAME = Scatter;
@@ -437,7 +442,10 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Scatter/Resources/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kakabaev.scatter;
 				PRODUCT_NAME = Scatter;

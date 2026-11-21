@@ -189,9 +189,11 @@ final class AppStore: ObservableObject {
 
     func selectAdjacentCollection(delta: Int) {
         let cols = sortedCollections
-        guard let current = selectedCollection,
+        guard !cols.isEmpty,
+              let current = selectedCollection,
               let idx = cols.firstIndex(where: { $0.id == current.id }) else { return }
-        let next = max(0, min(cols.count - 1, idx + delta))
+        let count = cols.count
+        let next = ((idx + delta) % count + count) % count
         selectCollection(cols[next].id)
     }
 
