@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    /// Dedicated clear field editor for `SearchNSTextField` (avoids default glass chrome).
+    private var searchFieldEditor: NSTextView?
     private var store: AppStore!
     /// True while the launcher is key/front. Cleared on resign only after the current
     /// run-loop turn so status-item clicks (which resign key before the action) still
@@ -197,6 +199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         applyRestoredContentSize(to: window)
         centerOnActiveScreen(window)
+        // Create/attach the shared field editor while the panel is still hidden so the
+        // first type-to-search focus does not flash frosted glass chrome.
+        FieldEditorStyle.warm(in: window)
         mainWindow = window
     }
 
@@ -277,6 +282,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSWindowDelegate {
+    func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
+        guard sender === mainWindow, client is SearchNSTextField else { return nil }
+        if searchFieldEditor == nil {
+            let editor = NSTextView(frame: .zero)
+            FieldEditorStyle.apply(editor)
+            searchFieldEditor = editor
+        } else if let editor = searchFieldEditor {
+            FieldEditorStyle.apply(editor)
+        }
+        return searchFieldEditor
+    }
+
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === mainWindow {
             store.hideMainWindow()

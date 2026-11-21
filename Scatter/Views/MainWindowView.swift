@@ -60,12 +60,12 @@ struct MainWindowView: View {
             .opacity(store.isSearching ? 0.35 : 1)
 
             if store.isSearching {
+                // No opacity transition on the overlay: animating an NSTextField
+                // (field editor) on first focus flashes a small frosted “ghost” window.
                 SearchOverlayView()
-                    .transition(.opacity)
                     .zIndex(10)
             }
         }
-        .animation(.easeOut(duration: 0.12), value: store.isSearching)
         .ignoresSafeArea(edges: .top)
         .frame(minWidth: 640, minHeight: 400)
         .background(KeyMonitor(handler: handleKey))

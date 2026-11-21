@@ -8,7 +8,6 @@ struct LauncherItemView: View {
 
     private var titleHeight: CGFloat { TileMetrics.titleHeight(labelSize: labelSize) }
     private var titleWidth: CGFloat { iconSize + TileMetrics.titleSideInset * 2 }
-    private var badgeSize: CGFloat { max(16, iconSize * 0.38) }
 
     /// Matches the vertical padding and the icon-to-title gap in `body`.
     private let tilePaddingV: CGFloat = 4
@@ -19,23 +18,7 @@ struct LauncherItemView: View {
 
     var body: some View {
         VStack(spacing: iconTitleSpacing) {
-            ZStack(alignment: .bottomTrailing) {
-                Image(nsImage: IconProvider.icon(for: item, size: iconSize))
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: iconSize, height: iconSize)
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-
-                if let badge = IconProvider.openWithBadgeIcon(for: item, size: badgeSize) {
-                    Image(nsImage: badge)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: badgeSize, height: badgeSize)
-                        .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
-                        .offset(x: 2, y: 2)
-                }
-            }
-            .frame(width: iconSize, height: iconSize)
+            LauncherItemIconView(item: item, size: iconSize)
 
             Text(item.displayName)
                 .font(.system(size: labelSize))
