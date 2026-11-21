@@ -29,6 +29,11 @@ struct FreeformCanvasView: View {
     private var itemWidth: CGFloat { TileMetrics.itemWidth(iconSize: iconSize) }
     private var itemHeight: CGFloat { TileMetrics.itemHeight(iconSize: iconSize, labelSize: labelSize) }
 
+    /// Matches the canvas top padding (traffic-light clearance).
+    private static let canvasTopInset: CGFloat = 12
+    /// Right / bottom margin when expanding the window to fit clipped tiles.
+    private static let fitContentMargin: CGFloat = SnapToGrid.origin.x
+
     /// Small but intentional pointer travel before a drag begins.
     private let dragThreshold: CGFloat = 4
 
@@ -51,9 +56,7 @@ struct FreeformCanvasView: View {
                         if store.isSelectingItems { return }
                         store.selectedItemID = nil
                     },
-                    contextMenuItems: [
-                        .init(title: "Add…") { point in pickAndAdd(at: point) },
-                    ],
+                    contextMenuItems: emptyCanvasContextMenuItems,
                     onURLsDropped: { urls, point in
                         handleCanvasURLs(urls, at: point)
                     }
@@ -124,9 +127,14 @@ struct FreeformCanvasView: View {
                         .padding(.bottom, 16)
                         .zIndex(1_200)
                 }
+
+                if !store.isSearching {
+                    overflowChevrons(canvasSize: geo.size)
+                        .zIndex(1_100)
+                }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-            .padding(.top, 12)
+            .padding(.top, Self.canvasTopInset)
             .onAppear { canvasSize = geo.size }
             .onChange(of: geo.size) { _, newSize in canvasSize = newSize }
             .onChange(of: store.pasteRequestID) { _, _ in
@@ -192,6 +200,62 @@ struct FreeformCanvasView: View {
             store.addItemFromFinder(item, openWithCursor: openWithCursor)
         }
         pendingDrop = nil
+    }
+
+    private var emptyCanvasContextMenuItems: [WindowBackgroundDragView.MenuItem] {
+        let items = store.visibleItems
+        let settings = store.state.settings
+        let size = canvasSize
+        return [
+            .init(title: "Add…") { point in pickAndAdd(at: point) },
+            .separator(),
+            .submenu(title: "Layout", children: [
+                .init(
+                    title: "Delete Row",
+                    isEnabled: { point in
+                        let cell = SnapToGrid.hitTestCell(
+                            at: point,
+                            items: items,
+                            settings: settings,
+                            canvasSize: size
+                        )
+                        // Enabled only for a fully empty row that delete would collapse.
+                        return SnapToGrid.canDeleteEmptyRow(cell.row, items: items)
+                    },
+                    action: { point in
+                        let cell = SnapToGrid.hitTestCell(
+                            at: point,
+                            items: store.visibleItems,
+                            settings: store.state.settings,
+                            canvasSize: canvasSize
+                        )
+                        store.deleteEmptyRow(cell.row)
+                    }
+                ),
+                .init(
+                    title: "Delete Column",
+                    isEnabled: { point in
+                        let cell = SnapToGrid.hitTestCell(
+                            at: point,
+                            items: items,
+                            settings: settings,
+                            canvasSize: size
+                        )
+                        // Enabled only for a fully empty column that delete would collapse.
+                        return SnapToGrid.canDeleteEmptyColumn(cell.column, items: items)
+                    },
+                    action: { point in
+                        let cell = SnapToGrid.hitTestCell(
+                            at: point,
+                            items: store.visibleItems,
+                            settings: store.state.settings,
+                            canvasSize: canvasSize
+                        )
+                        store.deleteEmptyColumn(cell.column)
+                    }
+                ),
+            ]),
+        ]
     }
 
     /// `canvasPoint` is the right-click location in the empty-canvas view (tile centers on it, same as drop).
@@ -304,6 +368,129 @@ struct FreeformCanvasView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Right / bottom edge hints when tiles are clipped by the window. Click expands to fit all.
+    @ViewBuilder
+    private func overflowChevrons(canvasSize: CGSize) -> some View {
+        let overflow = overflowEdges(canvasSize: canvasSize)
+        let bottomPad: CGFloat = store.isSelectingItems && !store.selectedItemIDs.isEmpty ? 64 : 6
+        // `.position` keeps hit targets button-sized (no full-canvas frame intercept).
+        ZStack {
+            if overflow.right {
+                overflowChevronButton(systemName: "chevron.right")
+                    .position(x: canvasSize.width - 17, y: canvasSize.height / 2)
+            }
+            if overflow.bottom {
+                overflowChevronButton(systemName: "chevron.down")
+                    .position(x: canvasSize.width / 2, y: canvasSize.height - bottomPad - 14)
+            }
+        }
+        .frame(width: canvasSize.width, height: canvasSize.height)
+    }
+
+    private func overflowChevronButton(systemName: String) -> some View {
+        Button {
+            expandWindowToFitContent()
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 22, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.black.opacity(0.45))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                        )
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Resize window to show all items")
+    }
+
+    private func overflowEdges(canvasSize: CGSize) -> (right: Bool, bottom: Bool) {
+        let bounds = SnapToGrid.contentBounds(items: store.visibleItems, settings: store.state.settings)
+        guard bounds != .null else { return (false, false) }
+        // Top inset shifts the framed canvas down; bottom clips that much sooner.
+        let right = bounds.maxX > canvasSize.width + 0.5
+        let bottom = bounds.maxY + Self.canvasTopInset > canvasSize.height + 0.5
+        guard right || bottom else { return (false, false) }
+        // Only show a chevron when the window can still grow on that axis.
+        let room = growRoom(for: canvasSize)
+        return (right && room.width > 0.5, bottom && room.height > 0.5)
+    }
+
+    /// How much the canvas can still grow before hitting the screen’s visible frame.
+    private func growRoom(for canvasSize: CGSize) -> CGSize {
+        guard let window = launcherWindow(),
+              let screen = window.screen ?? NSScreen.main else {
+            return CGSize(width: 10_000, height: 10_000)
+        }
+        let visible = screen.visibleFrame
+        let contentW = window.contentView?.bounds.width ?? window.frame.width
+        let contentH = window.contentView?.bounds.height ?? window.frame.height
+        let chromeW = window.frame.width - contentW
+        let chromeH = window.frame.height - contentH
+        // Keep the window’s top-left fixed; remaining room is to the right and down.
+        let maxContentW = max(0, visible.maxX - window.frame.minX - chromeW)
+        let maxContentH = max(0, window.frame.maxY - visible.minY - chromeH)
+        let sidebar = SidebarLayout.clamped(
+            store.state.settings.sidebarWidth,
+            containerWidth: Double(contentW)
+        )
+        let maxCanvasW = max(0, maxContentW - sidebar - SidebarLayout.splitterThickness)
+        return CGSize(
+            width: max(0, maxCanvasW - canvasSize.width),
+            height: max(0, maxContentH - contentH)
+        )
+    }
+
+    /// Expand the main window so every visible tile fits (clamped to the display).
+    private func expandWindowToFitContent() {
+        guard let window = launcherWindow() else { return }
+        let bounds = SnapToGrid.contentBounds(items: store.visibleItems, settings: store.state.settings)
+        guard bounds != .null else { return }
+
+        let contentW = window.contentView?.bounds.width ?? window.frame.width
+        let contentH = window.contentView?.bounds.height ?? window.frame.height
+        let sidebar = SidebarLayout.clamped(
+            store.state.settings.sidebarWidth,
+            containerWidth: Double(contentW)
+        )
+        let neededCanvasW = bounds.maxX + Self.fitContentMargin
+        let neededCanvasH = bounds.maxY + Self.fitContentMargin + Self.canvasTopInset
+        var targetContent = CGSize(
+            width: max(contentW, sidebar + SidebarLayout.splitterThickness + neededCanvasW),
+            height: max(contentH, neededCanvasH)
+        )
+
+        if let screen = window.screen ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            let chromeW = window.frame.width - contentW
+            let chromeH = window.frame.height - contentH
+            let maxContentW = max(640, visible.maxX - window.frame.minX - chromeW)
+            let maxContentH = max(400, window.frame.maxY - visible.minY - chromeH)
+            targetContent.width = min(targetContent.width, maxContentW)
+            targetContent.height = min(targetContent.height, maxContentH)
+        }
+
+        let deltaW = targetContent.width - contentW
+        let deltaH = targetContent.height - contentH
+        guard deltaW > 0.5 || deltaH > 0.5 else { return }
+
+        var frame = window.frame
+        frame.size.width += deltaW
+        frame.size.height += deltaH
+        frame.origin.y -= deltaH // keep top edge fixed (AppKit y grows upward)
+        window.setFrame(frame, display: true, animate: true)
+    }
+
+    private func launcherWindow() -> NSWindow? {
+        NSApp.windows.first(where: { $0 is LauncherWindow && $0.isVisible })
+            ?? NSApp.windows.first(where: { $0 is LauncherWindow })
     }
 
     private func updateDropTarget(for itemID: UUID, proposed: CGPoint) {
@@ -419,6 +606,15 @@ struct FreeformCanvasView: View {
         if store.visibleItems.count > 1 {
             Button("Select…") {
                 store.enterItemSelection(seeding: [item.id])
+            }
+        }
+        Menu("Layout") {
+            Button("Insert Row") {
+                store.insertEmptyRow(beforeItem: item.id)
+            }
+            .disabled(!SnapToGrid.canInsertEmptyRow(before: item.gridRow, items: store.visibleItems))
+            Button("Insert Column") {
+                store.insertEmptyColumn(beforeItem: item.id)
             }
         }
         Menu("Move to Collection") {

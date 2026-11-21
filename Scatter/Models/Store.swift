@@ -437,6 +437,74 @@ final class AppStore: ObservableObject {
         }
     }
 
+    /// Insert an empty grid row before `itemID`, shifting that item and everything below down.
+    func insertEmptyRow(beforeItem itemID: UUID) {
+        withAnimation(Self.layoutAnimation) {
+            mutate {
+                for ci in $0.collections.indices {
+                    guard let item = $0.collections[ci].items.first(where: { $0.id == itemID }) else {
+                        continue
+                    }
+                    SnapToGrid.insertEmptyRow(
+                        before: item.gridRow,
+                        items: &$0.collections[ci].items,
+                        settings: $0.settings
+                    )
+                    return
+                }
+            }
+        }
+    }
+
+    /// Insert an empty grid column before `itemID`, shifting that item and everything to its right.
+    func insertEmptyColumn(beforeItem itemID: UUID) {
+        withAnimation(Self.layoutAnimation) {
+            mutate {
+                for ci in $0.collections.indices {
+                    guard let item = $0.collections[ci].items.first(where: { $0.id == itemID }) else {
+                        continue
+                    }
+                    SnapToGrid.insertEmptyColumn(
+                        before: item.gridColumn,
+                        items: &$0.collections[ci].items,
+                        settings: $0.settings
+                    )
+                    return
+                }
+            }
+        }
+    }
+
+    /// Delete a fully empty grid row in the selected collection (items below shift up).
+    func deleteEmptyRow(_ row: Int) {
+        guard let collectionID = state.settings.selectedCollectionID else { return }
+        withAnimation(Self.layoutAnimation) {
+            mutate {
+                guard let ci = $0.collections.firstIndex(where: { $0.id == collectionID }) else { return }
+                SnapToGrid.deleteEmptyRow(
+                    row,
+                    items: &$0.collections[ci].items,
+                    settings: $0.settings
+                )
+            }
+        }
+    }
+
+    /// Delete a fully empty grid column in the selected collection (items to the right shift left).
+    func deleteEmptyColumn(_ column: Int) {
+        guard let collectionID = state.settings.selectedCollectionID else { return }
+        withAnimation(Self.layoutAnimation) {
+            mutate {
+                guard let ci = $0.collections.firstIndex(where: { $0.id == collectionID }) else { return }
+                SnapToGrid.deleteEmptyColumn(
+                    column,
+                    items: &$0.collections[ci].items,
+                    settings: $0.settings
+                )
+            }
+        }
+    }
+
     func moveItem(_ itemID: UUID, toCollection collectionID: UUID) {
         moveItems([itemID], toCollection: collectionID)
     }

@@ -29,6 +29,20 @@ enum SnapToGrid {
         fullRowHeight(settings: settings) * emptyRowHeightFactor
     }
 
+    /// Axis-aligned union of all item tiles (top-leading canvas coords). `.null` when empty.
+    static func contentBounds(items: [LauncherItem], settings: AppState.Settings) -> CGRect {
+        guard let first = items.first else { return .null }
+        let tileW = TileMetrics.itemWidth(iconSize: settings.iconSize)
+        let tileH = TileMetrics.itemHeight(iconSize: settings.iconSize, labelSize: settings.labelSize)
+        var bounds = CGRect(x: first.position.x, y: first.position.y, width: tileW, height: tileH)
+        for item in items.dropFirst() {
+            bounds = bounds.union(
+                CGRect(x: item.position.x, y: item.position.y, width: tileW, height: tileH)
+            )
+        }
+        return bounds
+    }
+
     // MARK: - Apply grid → absolute positions (empty rows = half height)
 
     /// Renumber `gridRow` so consecutive empty indices become a single empty row.
@@ -86,6 +100,114 @@ enum SnapToGrid {
             items[i].gridRow = cell.row
         }
         applyCompressedPositions(items: &items, settings: settings)
+    }
+
+    /// Whether Insert Row would create a visible spacer before `row`.
+    /// False at the top occupied row (leading empties pack away) or when `row - 1` is already empty.
+    static func canInsertEmptyRow(before row: Int, items: [LauncherItem]) -> Bool {
+        let target = max(0, row)
+        guard target > 0 else { return false }
+        return items.contains { $0.gridRow == target - 1 }
+    }
+
+    /// Open an empty grid row at `row` by shifting every item on/below that row down by one.
+    /// Compression still keeps at most one empty between occupied rows.
+    static func insertEmptyRow(
+        before row: Int,
+        items: inout [LauncherItem],
+        settings: AppState.Settings
+    ) {
+        guard canInsertEmptyRow(before: row, items: items) else { return }
+        let target = max(0, row)
+        for i in items.indices where items[i].gridRow >= target {
+            items[i].gridRow += 1
+        }
+        applyCompressedPositions(items: &items, settings: settings)
+    }
+
+    /// Open an empty grid column at `column` by shifting every item on/right of that column right by one.
+    static func insertEmptyColumn(
+        before column: Int,
+        items: inout [LauncherItem],
+        settings: AppState.Settings
+    ) {
+        let target = max(0, column)
+        for i in items.indices where items[i].gridColumn >= target {
+            items[i].gridColumn += 1
+        }
+        applyCompressedPositions(items: &items, settings: settings)
+    }
+
+    /// True when no item occupies `row` and at least one item sits below it (delete would shift).
+    static func canDeleteEmptyRow(_ row: Int, items: [LauncherItem]) -> Bool {
+        let target = max(0, row)
+        guard !items.contains(where: { $0.gridRow == target }) else { return false }
+        return items.contains { $0.gridRow > target }
+    }
+
+    /// True when no item occupies `column` and at least one item sits to its right (delete would shift).
+    static func canDeleteEmptyColumn(_ column: Int, items: [LauncherItem]) -> Bool {
+        let target = max(0, column)
+        guard !items.contains(where: { $0.gridColumn == target }) else { return false }
+        return items.contains { $0.gridColumn > target }
+    }
+
+    /// Remove empty `row` by shifting every item below it up by one.
+    static func deleteEmptyRow(
+        _ row: Int,
+        items: inout [LauncherItem],
+        settings: AppState.Settings
+    ) {
+        guard canDeleteEmptyRow(row, items: items) else { return }
+        let target = max(0, row)
+        for i in items.indices where items[i].gridRow > target {
+            items[i].gridRow -= 1
+        }
+        applyCompressedPositions(items: &items, settings: settings)
+    }
+
+    /// Remove empty `column` by shifting every item to its right left by one.
+    static func deleteEmptyColumn(
+        _ column: Int,
+        items: inout [LauncherItem],
+        settings: AppState.Settings
+    ) {
+        guard canDeleteEmptyColumn(column, items: items) else { return }
+        let target = max(0, column)
+        for i in items.indices where items[i].gridColumn > target {
+            items[i].gridColumn -= 1
+        }
+        applyCompressedPositions(items: &items, settings: settings)
+    }
+
+    /// Map a canvas click/point to the nearest grid cell (compressed empty-row strips).
+    /// Unlike drag targeting, `point` is the probe itself (not a tile top-left).
+    static func hitTestCell(
+        at point: CGPoint,
+        items: [LauncherItem],
+        settings: AppState.Settings,
+        canvasSize: CGSize
+    ) -> Cell {
+        let occupiedRows = Set(items.map(\.gridRow))
+        let bounds = gridBounds(canvasSize: canvasSize, settings: settings)
+        let size = cellSize(settings: settings)
+        guard size.width > 0 else { return Cell(column: 0, row: 0) }
+        let column = Int(round((point.x - origin.x) / size.width))
+
+        var bestRow = 0
+        var bestDist = CGFloat.greatestFiniteMagnitude
+        var y = origin.y
+        for row in 0...max(0, bounds.row) {
+            let h = rowHeight(row: row, occupiedRows: occupiedRows, settings: settings)
+            let center = y + h / 2
+            let dist = abs(point.y - center)
+            if dist < bestDist {
+                bestDist = dist
+                bestRow = row
+            }
+            y += h
+        }
+        return Cell(column: max(0, column), row: bestRow)
     }
 
     /// Resolve an item’s grid cell: prefer stored coords; bootstrap from absolute position if unset.
