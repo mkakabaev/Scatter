@@ -47,7 +47,10 @@ struct FreeformCanvasView: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 WindowBackgroundDragView(
-                    onClick: { store.selectedItemID = nil },
+                    onClick: {
+                        if store.isSelectingItems { return }
+                        store.selectedItemID = nil
+                    },
                     contextMenuItems: [
                         .init(title: "Add…") { point in pickAndAdd(at: point) },
                     ],
@@ -75,7 +78,7 @@ struct FreeformCanvasView: View {
                         item: item,
                         iconSize: iconSize,
                         labelSize: labelSize,
-                        isSelected: store.selectedItemID == item.id
+                        isSelected: itemIsSelected(item)
                     )
                     .frame(width: itemWidth, height: itemHeight, alignment: .top)
                     .offset(x: item.position.cgPoint.x, y: item.position.cgPoint.y)
@@ -113,6 +116,14 @@ struct FreeformCanvasView: View {
                     .offset(pickerOffset(for: target))
                     .zIndex(1_600)
                 }
+
+                if store.isSelectingItems, !store.selectedItemIDs.isEmpty {
+                    selectionActionBar
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                        .zIndex(1_200)
+                }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .padding(.top, 12)
@@ -125,6 +136,7 @@ struct FreeformCanvasView: View {
                 if let id = store.backgroundPickerItemID, !ids.contains(id) {
                     store.backgroundPickerItemID = nil
                 }
+                store.pruneItemSelection(toVisibleIDs: Set(ids))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -203,6 +215,13 @@ struct FreeformCanvasView: View {
         }
     }
 
+    private func itemIsSelected(_ item: LauncherItem) -> Bool {
+        if store.isSelectingItems {
+            return store.selectedItemIDs.contains(item.id)
+        }
+        return store.selectedItemID == item.id
+    }
+
     private func handleClick(_ item: LauncherItem) {
         store.selectedItemID = item.id
         let flags = NSEvent.modifierFlags
@@ -215,9 +234,11 @@ struct FreeformCanvasView: View {
     }
 
     /// Drag starts after a small pointer shift; a click with little/no movement opens the item.
+    /// In select mode: click toggles membership; reposition drag is suppressed.
     private func itemPointerGesture(_ item: LauncherItem) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
+                if store.isSelectingItems { return }
                 if dragOrigins[item.id] == nil {
                     dragOrigins[item.id] = item.position.cgPoint
                     store.selectedItemID = item.id
@@ -233,6 +254,10 @@ struct FreeformCanvasView: View {
                 updateDropTarget(for: item.id, proposed: proposed)
             }
             .onEnded { value in
+                if store.isSelectingItems {
+                    store.toggleItemSelection(item.id)
+                    return
+                }
                 let moved = dragMoved.contains(item.id)
                 let start = dragOrigins[item.id]
                 defer {
@@ -252,6 +277,33 @@ struct FreeformCanvasView: View {
                     handleClick(item)
                 }
             }
+    }
+
+    private var selectionActionBar: some View {
+        let count = store.selectedItemIDs.count
+        return HStack(spacing: 12) {
+            Text(count == 1 ? "1 Selected" : "\(count) Selected")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
+            Spacer(minLength: 8)
+            Menu("Move to Collection") {
+                ForEach(store.sortedCollections) { collection in
+                    Button(collection.name) {
+                        store.moveItems(store.selectedItemIDs, toCollection: collection.id)
+                    }
+                    .disabled(collection.id == store.selectedCollection?.id)
+                }
+            }
+            Button("Remove", role: .destructive) {
+                store.removeItems(store.selectedItemIDs)
+            }
+            Button("Done") {
+                store.exitItemSelection()
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func updateDropTarget(for itemID: UUID, proposed: CGPoint) {
@@ -296,8 +348,41 @@ struct FreeformCanvasView: View {
         return "Time Zone (\(city))"
     }
 
+    /// IDs the context menu’s Move / Remove should operate on.
+    private func contextMenuTargetIDs(for item: LauncherItem) -> Set<UUID> {
+        if store.isSelectingItems, store.selectedItemIDs.contains(item.id) {
+            return store.selectedItemIDs
+        }
+        return [item.id]
+    }
+
     @ViewBuilder
     private func itemContextMenu(_ item: LauncherItem) -> some View {
+        if store.isSelectingItems {
+            selectionModeItemContextMenu(item)
+        } else {
+            normalItemContextMenu(item)
+        }
+    }
+
+    @ViewBuilder
+    private func selectionModeItemContextMenu(_ item: LauncherItem) -> some View {
+        let targets = contextMenuTargetIDs(for: item)
+        Menu("Move to Collection") {
+            ForEach(store.sortedCollections) { collection in
+                Button(collection.name) {
+                    store.moveItems(targets, toCollection: collection.id)
+                }
+                .disabled(collection.id == store.selectedCollection?.id)
+            }
+        }
+        Button("Remove from Collection", role: .destructive) {
+            store.removeItems(targets)
+        }
+    }
+
+    @ViewBuilder
+    private func normalItemContextMenu(_ item: LauncherItem) -> some View {
         Button(ItemOpener.primaryActionTitle(for: item)) {
             ItemOpener.open(item, settings: store.state.settings, keepWindowOpen: false, store: store)
         }
@@ -331,6 +416,11 @@ struct FreeformCanvasView: View {
             set: { enabled in store.setApplyTimeZone(for: item.id, enabled: enabled) }
         ))
         Divider()
+        if store.visibleItems.count > 1 {
+            Button("Select…") {
+                store.enterItemSelection(seeding: [item.id])
+            }
+        }
         Menu("Move to Collection") {
             ForEach(store.sortedCollections) { collection in
                 Button(collection.name) {

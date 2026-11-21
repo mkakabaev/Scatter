@@ -156,6 +156,35 @@ struct MainWindowView: View {
             return nil
         }
 
+        if store.isSelectingItems {
+            if event.keyCode == 53 { // escape — leave select mode, keep the window
+                store.exitItemSelection()
+                return nil
+            }
+            // No open / arrows / type-to-search while selecting (Delete is never batch-remove).
+            if event.modifierFlags.contains(.command) {
+                if event.keyCode == 126 {
+                    store.selectAdjacentCollection(delta: -1)
+                    return nil
+                }
+                if event.keyCode == 125 {
+                    store.selectAdjacentCollection(delta: 1)
+                    return nil
+                }
+                if let chars = event.charactersIgnoringModifiers {
+                    if chars == "," {
+                        store.requestSettings()
+                        return nil
+                    }
+                    if let number = Int(chars), (1...9).contains(number) {
+                        store.selectCollection(index: number - 1)
+                        return nil
+                    }
+                }
+            }
+            return nil
+        }
+
         if event.modifierFlags.contains(.command) {
             if event.keyCode == 126 { // up
                 store.selectAdjacentCollection(delta: -1)
@@ -215,7 +244,7 @@ struct MainWindowView: View {
             store.clearSearch()
             return nil
         case 36, 76: // return — open selected hit (TextField onSubmit also handles this)
-            if let id = store.selectedItemID,
+            if let id = store.searchSelectedItemID,
                let hit = store.searchResults.first(where: { $0.item.id == id }) {
                 let keepOpen = event.modifierFlags.contains(.option)
                 if event.modifierFlags.contains(.command) {

@@ -47,7 +47,7 @@ struct SearchOverlayView: View {
                                 ForEach(store.searchResults) { hit in
                                     SearchResultRow(
                                         hit: hit,
-                                        isSelected: store.selectedItemID == hit.item.id
+                                        isSelected: store.searchSelectedItemID == hit.item.id
                                     )
                                     .id(hit.item.id)
                                     .onTapGesture { open(hit) }
@@ -56,7 +56,7 @@ struct SearchOverlayView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 8)
                         }
-                        .onChange(of: store.selectedItemID) { _, newID in
+                        .onChange(of: store.searchSelectedItemID) { _, newID in
                             guard let newID else { return }
                             withAnimation(.easeOut(duration: 0.12)) {
                                 proxy.scrollTo(newID, anchor: .center)
@@ -89,7 +89,7 @@ struct SearchOverlayView: View {
     }
 
     private func openSelected() {
-        guard let id = store.selectedItemID,
+        guard let id = store.searchSelectedItemID,
               let hit = store.searchResults.first(where: { $0.item.id == id }) else { return }
         open(hit)
     }

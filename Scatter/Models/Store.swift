@@ -7,7 +7,13 @@ import SwiftUI
 final class AppStore: ObservableObject {
     @Published private(set) var state: AppState
     @Published var searchQuery: String = ""
+    /// Highlight in the search overlay results list only — never drives canvas selection.
+    @Published var searchSelectedItemID: UUID?
     @Published var selectedItemID: UUID?
+    /// Explicit multi-select mode for the open collection. Transient; not persisted.
+    @Published private(set) var isSelectingItems = false
+    /// IDs toggled while `isSelectingItems`. Transient; not persisted.
+    @Published private(set) var selectedItemIDs: Set<UUID> = []
     @Published var isMainWindowVisible: Bool = false
     /// Incremented each time Settings should be shown (edge-trigger-safe reopen).
     @Published private(set) var settingsRequestID: Int = 0
@@ -32,12 +38,46 @@ final class AppStore: ObservableObject {
 
     func requestSettings() {
         backgroundPickerItemID = nil
+        exitItemSelection()
         settingsRequestID &+= 1
     }
 
     func requestPaste() {
         backgroundPickerItemID = nil
         pasteRequestID &+= 1
+    }
+
+    /// Enter multi-select mode. `seed` is the initial set (item **Select…** seeds that tile).
+    func enterItemSelection(seeding seed: Set<UUID> = []) {
+        backgroundPickerItemID = nil
+        isSelectingItems = true
+        selectedItemIDs = seed.filter { findItem($0) != nil }
+    }
+
+    func exitItemSelection() {
+        isSelectingItems = false
+        selectedItemIDs = []
+    }
+
+    func toggleItemSelection(_ itemID: UUID) {
+        guard isSelectingItems else { return }
+        if selectedItemIDs.contains(itemID) {
+            selectedItemIDs.remove(itemID)
+            if selectedItemIDs.isEmpty {
+                exitItemSelection()
+            }
+        } else {
+            selectedItemIDs.insert(itemID)
+        }
+    }
+
+    /// Drop IDs that are no longer on the open collection canvas.
+    func pruneItemSelection(toVisibleIDs ids: Set<UUID>) {
+        guard isSelectingItems else { return }
+        selectedItemIDs = selectedItemIDs.intersection(ids)
+        if selectedItemIDs.isEmpty {
+            exitItemSelection()
+        }
     }
 
     private let fileURL: URL
@@ -80,7 +120,13 @@ final class AppStore: ObservableObject {
 
     func clearSearch() {
         searchQuery = ""
-        selectedItemID = nil
+        searchSelectedItemID = nil
+    }
+
+    private func exitItemSelectionIfSearching() {
+        if isSelectingItems && isSearching {
+            exitItemSelection()
+        }
     }
 
     init() {
@@ -151,13 +197,14 @@ final class AppStore: ObservableObject {
 
     func showMainWindow() {
         isMainWindowVisible = true
-        searchQuery = ""
+        clearSearch()
     }
 
     func hideMainWindow() {
         isMainWindowVisible = false
-        searchQuery = ""
+        clearSearch()
         selectedItemID = nil
+        exitItemSelection()
         backgroundPickerItemID = nil
         openFailure = nil
     }
@@ -184,7 +231,8 @@ final class AppStore: ObservableObject {
     func selectCollection(_ id: UUID) {
         mutate { $0.settings.selectedCollectionID = id }
         selectedItemID = nil
-        searchQuery = ""
+        clearSearch()
+        exitItemSelection()
         backgroundPickerItemID = nil
     }
 
@@ -362,11 +410,17 @@ final class AppStore: ObservableObject {
     }
 
     func removeItem(_ itemID: UUID) {
+        removeItems([itemID])
+    }
+
+    func removeItems(_ itemIDs: Set<UUID>) {
+        guard !itemIDs.isEmpty else { return }
         withAnimation(Self.layoutAnimation) {
             mutate {
                 for ci in $0.collections.indices {
-                    guard $0.collections[ci].items.contains(where: { $0.id == itemID }) else { continue }
-                    $0.collections[ci].items.removeAll { $0.id == itemID }
+                    let before = $0.collections[ci].items.count
+                    $0.collections[ci].items.removeAll { itemIDs.contains($0.id) }
+                    guard $0.collections[ci].items.count != before else { continue }
                     SnapToGrid.applyCompressedPositions(
                         items: &$0.collections[ci].items,
                         settings: $0.settings
@@ -374,35 +428,58 @@ final class AppStore: ObservableObject {
                 }
             }
         }
-        if selectedItemID == itemID { selectedItemID = nil }
+        if let id = selectedItemID, itemIDs.contains(id) {
+            selectedItemID = nil
+        }
+        selectedItemIDs.subtract(itemIDs)
+        if isSelectingItems, selectedItemIDs.isEmpty {
+            exitItemSelection()
+        }
     }
 
     func moveItem(_ itemID: UUID, toCollection collectionID: UUID) {
-        guard var item = findItem(itemID) else { return }
+        moveItems([itemID], toCollection: collectionID)
+    }
+
+    func moveItems(_ itemIDs: Set<UUID>, toCollection collectionID: UUID) {
+        guard !itemIDs.isEmpty else { return }
+        var moving: [LauncherItem] = []
+        for id in itemIDs {
+            if let item = findItem(id) { moving.append(item) }
+        }
+        guard !moving.isEmpty else { return }
+        moving.sort {
+            if $0.gridRow != $1.gridRow { return $0.gridRow < $1.gridRow }
+            return $0.gridColumn < $1.gridColumn
+        }
         withAnimation(Self.layoutAnimation) {
             mutate {
                 for ci in $0.collections.indices {
-                    let had = $0.collections[ci].items.contains(where: { $0.id == itemID })
-                    $0.collections[ci].items.removeAll { $0.id == itemID }
-                    if had {
-                        SnapToGrid.applyCompressedPositions(
-                            items: &$0.collections[ci].items,
-                            settings: $0.settings
-                        )
-                    }
+                    let before = $0.collections[ci].items.count
+                    $0.collections[ci].items.removeAll { itemIDs.contains($0.id) }
+                    guard $0.collections[ci].items.count != before else { continue }
+                    SnapToGrid.applyCompressedPositions(
+                        items: &$0.collections[ci].items,
+                        settings: $0.settings
+                    )
                 }
                 guard let dest = $0.collections.firstIndex(where: { $0.id == collectionID }) else { return }
                 let prefs = $0.settings
-                let free = SnapToGrid.nearestFreeCell(
-                    from: .init(column: 0, row: 0),
-                    occupied: Set($0.collections[dest].items.map {
-                        SnapToGrid.cell(of: $0, settings: prefs)
-                    }),
-                    bounds: SnapToGrid.gridBounds(canvasSize: nil, settings: prefs)
-                )
-                item.gridColumn = free.column
-                item.gridRow = free.row
-                $0.collections[dest].items.append(item)
+                var occupied = Set($0.collections[dest].items.map {
+                    SnapToGrid.cell(of: $0, settings: prefs)
+                })
+                let bounds = SnapToGrid.gridBounds(canvasSize: nil, settings: prefs)
+                for var item in moving {
+                    let free = SnapToGrid.nearestFreeCell(
+                        from: .init(column: 0, row: 0),
+                        occupied: occupied,
+                        bounds: bounds
+                    )
+                    item.gridColumn = free.column
+                    item.gridRow = free.row
+                    occupied.insert(free)
+                    $0.collections[dest].items.append(item)
+                }
                 SnapToGrid.applyCompressedPositions(
                     items: &$0.collections[dest].items,
                     settings: $0.settings
@@ -410,6 +487,11 @@ final class AppStore: ObservableObject {
                 $0.settings.selectedCollectionID = collectionID
             }
         }
+        if let id = selectedItemID, itemIDs.contains(id) {
+            selectedItemID = nil
+        }
+        // Destination collection switch ends multi-select (same as `selectCollection`).
+        exitItemSelection()
     }
 
     func setItemBackground(_ itemID: UUID, hex: String?) {
@@ -516,32 +598,34 @@ final class AppStore: ObservableObject {
         }
         guard !character.isNewline else { return }
         searchQuery.append(character)
+        exitItemSelectionIfSearching()
         syncSearchSelection()
     }
 
     func setSearchQuery(_ query: String) {
         searchQuery = query
+        exitItemSelectionIfSearching()
         syncSearchSelection()
     }
 
     func syncSearchSelection() {
         let hits = searchResults
-        if let current = selectedItemID, hits.contains(where: { $0.item.id == current }) {
+        if let current = searchSelectedItemID, hits.contains(where: { $0.item.id == current }) {
             return
         }
-        selectedItemID = hits.first?.item.id
+        searchSelectedItemID = hits.first?.item.id
     }
 
     func selectAdjacentSearchResult(delta: Int) {
         let hits = searchResults
         guard !hits.isEmpty else { return }
-        guard let current = selectedItemID,
+        guard let current = searchSelectedItemID,
               let idx = hits.firstIndex(where: { $0.item.id == current }) else {
-            selectedItemID = hits.first?.item.id
+            searchSelectedItemID = hits.first?.item.id
             return
         }
         let next = max(0, min(hits.count - 1, idx + delta))
-        selectedItemID = hits[next].item.id
+        searchSelectedItemID = hits[next].item.id
     }
 
     private func mutate(_ body: (inout AppState) -> Void) {

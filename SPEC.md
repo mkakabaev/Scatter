@@ -169,22 +169,24 @@ Default click / Return / primary context action:
 | Click / Return | Primary action (Open / Open in App); hide window **only on success** |
 | Option-click | Primary action, keep window |
 | ⌘-click | Reveal in Finder (no-op for URL items — nothing on disk); hide window **only on success** (Option-⌘ keeps window, same as Open) |
-| Escape | If the screen eyedropper is active: cancel the sample and leave the palette open. If background palette is open: close it. If searching: clear search overlay; else hide window (silent — no AppKit beep; `LauncherWindow.cancelOperation`) |
-| ⌘↑ / ⌘↓ | Prev/next collection (when not searching); wraps (last↔first) |
-| ⌘1–9 | Jump to collection N (when not searching) |
+| Escape | If the screen eyedropper is active: cancel the sample and leave the palette open. If background palette is open: close it. If **select mode**: exit select mode (clear multi-selection). If searching: clear search overlay; else hide window (silent — no AppKit beep; `LauncherWindow.cancelOperation`) |
+| ⌘↑ / ⌘↓ | Prev/next collection (when not searching); wraps (last↔first). Still works in select mode |
+| ⌘1–9 | Jump to collection N (when not searching). Still works in select mode |
 | ⌘, | Open Settings |
 | ⌘V | Paste Finder file/folder/app paths or an http(s) URL from the clipboard onto the current collection (same ingest as drop, including Default vs Open With Cursor for files/folders). If the pointer is over the canvas, insert at that point (tile-centered, same as a Finder drop); otherwise place at the next free grid cell(s). No-op if the clipboard has nothing usable. Suppressed while searching or alert TextFields are editing (those keep normal paste). |
-| Arrows | Canvas: nearest-neighbor. Search overlay: ↑/↓ move selection in results. **Not** while a rename/new-collection alert (or other text field) is editing |
-| Type | Opens **search overlay** (visible text field); matches **saved items across all collections** (no Spotlight). First key is letter/digit/space/`.`/`-`/`_` only. Suppressed while alert TextFields are first responder |
+| Arrows | Canvas: nearest-neighbor (**disabled in select mode**). Search overlay: ↑/↓ move highlight in results (`searchSelectedItemID` only — **must not** change canvas `selectedItemID`). **Not** while a rename/new-collection alert (or other text field) is editing |
+| Type | Opens **search overlay** (visible text field); matches **saved items across all collections** (no Spotlight). First key is letter/digit/space/`.`/`-`/`_` only. Suppressed while alert TextFields are first responder, and while **select mode** is on (typing does not start search until select mode ends) |
+| Delete / ⌫ | **Never** removes canvas items (including in select mode). Batch remove is UI-only (action bar / context menu) |
 
 ### Search overlay
 
 - Trigger: typing an allowed character while the main window is open (or editing the overlay field). Allowed first characters: letters, digits, space, `.`, `-`, `_`.
 - UI: dimmed full-window overlay + centered panel (`clipShape` rounded **24pt** continuous so list doesn’t square-clip corners); panel uses **`.regularMaterial`** (system-tinted frosted glass — light/dark follows Appearance); large Spotlight-like search row (**22pt** magnifying glass, **24pt** query font, semantic `labelColor` / `secondaryLabelColor`); AppKit `SearchTextField` / `SearchNSTextField` (caret at end — **do not** select initial character); no clear-button; results: **48pt** icons via `LauncherItemIconView` (same Open With badge as tiles; no drop shadow), **medium 17pt** title + secondary collection subtitle; soft primary-opacity selection wash (not accent); **no** kind label (App/File/…). **Do not** opacity-animate overlay insert. First-focus frosted flash: warm the field editor in `setupMainWindow` via `FieldEditorStyle.warm` (window still hidden); return a clear custom editor from `windowWillReturnFieldEditor` for `SearchNSTextField`; sanitize editor + enclosing scroll view (`drawsBackground = false`, no spell/completion) in `becomeFirstResponder`.
 - Query scope: all collections’ `displayName` substring match; results sorted **A–Z** by `displayName`; canvas underneath is **not** filtered.
+- Result highlight is `AppStore.searchSelectedItemID` (transient). Changing the query or ↑/↓ in the overlay updates that ID only — **never** canvas `selectedItemID`. Return / click opens the highlighted hit; dismissing search clears `searchSelectedItemID` and leaves canvas selection unchanged.
 - Silent open: `LauncherWindow.keyDown` must **not** call `super` (avoids NSBeep on type-to-search).
 - Exit: Escape clears search; **click dimmed overlay** clears search; **window resign key** also `clearSearch()` (overlay dismisses on deactivate).
-- APIs: `AppStore.isSearching`, `searchResults: [SearchHit]`, `clearSearch()`, `setSearchQuery(_:)`, `selectAdjacentSearchResult(delta:)`.
+- APIs: `AppStore.isSearching`, `searchResults: [SearchHit]`, `searchSelectedItemID`, `clearSearch()`, `setSearchQuery(_:)`, `selectAdjacentSearchResult(delta:)`.
 - View: `SearchOverlayView.swift`.
 
 ### Login item
@@ -216,7 +218,8 @@ Default click / Return / primary context action:
 
 - Resolution order: per-item bookmark (must exist on disk) → per-item bundle id (must exist on disk) → system default when no Open With is set. If Open With **is** set but neither resolves to an installed app, open fails with a missing-app alert (do not silently fall back to the system handler).
 - Context menu primary: `Open` or `Open in {App}`; **Reveal in Finder** for app/file/folder only (omitted for URLs). Reveal hides the launcher on success, same as Open.
-- Context menu groups: Open (and Reveal when shown) → Open With… / Clear Open With → **Rename… / Background… / Time Zone toggle** → Move / Remove
+- Context menu groups: Open (and Reveal when shown) → Open With… / Clear Open With → **Rename… / Background… / Time Zone toggle** → **Select…** (only when the open collection has **>1** items) → Move / Remove
+- **Select mode** (`AppStore.isSelectingItems` / `selectedItemIDs`): enter via item **Select…** only (when the open collection has **>1** items; seeds that ID). Click toggles membership; deselecting the last selected item exits select mode; empty-canvas click is ignored (selection unchanged); no open-on-click; no in-canvas reposition drag; no multi-drag (single-item drag only outside select mode). While selecting, item context menu is batch **Move to Collection** / **Remove from Collection** (whole set if the clicked tile is in the set, else that one tile) — no **Done** menu item. Non-empty multi-selection shows a bottom canvas bar: count + Move + Remove + Done. Exit via deselecting the last item, action-bar **Done**, Escape, collection switch, hide window, Settings, or starting search. **No** keyboard delete/remove.
 - Copy casing: **Open With** (feature / chooser), **Open in {App}** / **Always Open in** (`in` lowercase as destination preposition).
 - **Apps / files / folders — Open With…** (`OpenWithPanel`): NSOpenPanel + accessory checkbox **Always Open in**
   - Checked on OK → save as per-item Open With; primary becomes `Open in {App}`
