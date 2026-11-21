@@ -411,6 +411,24 @@ enum SnapToGrid {
         return Cell(column: max(0, column), row: bestRow)
     }
 
+    /// Top-left of the first free cell in row-major order (for ⌘V / auto-place).
+    static func nextFreePosition(
+        items: [LauncherItem],
+        settings: AppState.Settings,
+        canvasSize: CGSize
+    ) -> CGPoint {
+        let bounds = gridBounds(canvasSize: canvasSize, settings: settings)
+        let occupied = Set(items.map { cell(of: $0, settings: settings) })
+        let free = nearestFreeCell(from: Cell(column: 0, row: 0), occupied: occupied, bounds: bounds)
+        let occupiedRows = Set(items.map(\.gridRow)).union([free.row])
+        return positionForGrid(
+            row: free.row,
+            column: free.column,
+            occupiedRows: occupiedRows,
+            settings: settings
+        )
+    }
+
     static func nearestFreeCell(from preferred: Cell, occupied: Set<Cell>, bounds: Cell? = nil) -> Cell {
         let start = Cell(column: max(0, preferred.column), row: max(0, preferred.row))
         if !occupied.contains(start) { return start }

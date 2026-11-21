@@ -106,7 +106,7 @@ final class WindowBackgroundDragNSView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let onURLsDropped else { return false }
         let point = convert(sender.draggingLocation, from: nil)
-        let urls = Self.urls(from: sender.draggingPasteboard)
+        let urls = ItemOpener.urls(from: sender.draggingPasteboard)
         guard !urls.isEmpty else { return false }
         onURLsDropped(urls, point)
         return true
@@ -114,33 +114,8 @@ final class WindowBackgroundDragNSView: NSView {
 
     private func canAccept(_ sender: NSDraggingInfo) -> Bool {
         guard onURLsDropped != nil else { return false }
-        return !Self.urls(from: sender.draggingPasteboard).isEmpty
+        return !ItemOpener.urls(from: sender.draggingPasteboard).isEmpty
             || ItemOpener.draggedWebLink() != nil
-    }
-
-    /// Prefer on-disk file URLs; otherwise http(s) from the drag pasteboard; otherwise any URL.
-    private static func urls(from pasteboard: NSPasteboard) -> [URL] {
-        if let files = pasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL], !files.isEmpty {
-            return files.filter { FileManager.default.fileExists(atPath: $0.path) }
-        }
-
-        if let link = ItemOpener.draggedWebLink() {
-            return [link.url]
-        }
-
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
-            return urls
-        }
-
-        // Last resort: raw public.file-url / public.url strings on the pasteboard.
-        if let paths = pasteboard.propertyList(forType: .fileURL) as? [String] {
-            let urls = paths.compactMap { URL(string: $0) ?? URL(fileURLWithPath: $0) }
-            if !urls.isEmpty { return urls }
-        }
-        return []
     }
 
     // MARK: - Window drag

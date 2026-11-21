@@ -435,14 +435,47 @@ enum ItemOpener {
 
     /// http(s) link on the drag pasteboard. Safari writes `public.url` here; the item provider is often only a `.webloc` file promise.
     static func draggedWebLink() -> DraggedWebLink? {
-        let pasteboard = NSPasteboard(name: .drag)
-        guard let url = webURL(on: pasteboard) else { return nil }
-        return DraggedWebLink(url: url, title: pasteboard.string(forType: urlNameType))
+        webLink(on: NSPasteboard(name: .drag))
     }
 
     /// `public.url-name` from the drag pasteboard (page title), when the browser provided one.
     static func draggedWebTitle() -> String? {
         NSPasteboard(name: .drag).string(forType: urlNameType)
+    }
+
+    /// http(s) link on the general clipboard (⌘V), including plain-text URL strings.
+    static func clipboardWebLink() -> DraggedWebLink? {
+        webLink(on: .general)
+    }
+
+    /// Prefer on-disk file URLs; otherwise http(s); otherwise any URL. Shared by Finder drop and ⌘V.
+    static func urls(from pasteboard: NSPasteboard) -> [URL] {
+        if let files = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !files.isEmpty {
+            return files.filter { FileManager.default.fileExists(atPath: $0.path) }
+        }
+
+        if let link = webLink(on: pasteboard) {
+            return [link.url]
+        }
+
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
+            return urls
+        }
+
+        // Last resort: raw public.file-url / public.url strings on the pasteboard.
+        if let paths = pasteboard.propertyList(forType: .fileURL) as? [String] {
+            let urls = paths.compactMap { URL(string: $0) ?? URL(fileURLWithPath: $0) }
+            if !urls.isEmpty { return urls }
+        }
+        return []
+    }
+
+    static func webLink(on pasteboard: NSPasteboard) -> DraggedWebLink? {
+        guard let url = webURL(on: pasteboard) else { return nil }
+        return DraggedWebLink(url: url, title: pasteboard.string(forType: urlNameType))
     }
 
     private static let urlNameType = NSPasteboard.PasteboardType("public.url-name")
@@ -451,15 +484,20 @@ enum ItemOpener {
         if let string = pasteboard.string(forType: .URL), let url = httpURL(from: string) {
             return url
         }
-        guard let data = pasteboard.data(forType: .URL) else { return nil }
-        if let string = String(data: data, encoding: .utf8), let url = httpURL(from: string) {
-            return url
+        if let data = pasteboard.data(forType: .URL) {
+            if let string = String(data: data, encoding: .utf8), let url = httpURL(from: string) {
+                return url
+            }
+            if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? String,
+               let url = httpURL(from: plist) {
+                return url
+            }
+            if let url = URL(dataRepresentation: data, relativeTo: nil), isHTTP(url) {
+                return url
+            }
         }
-        if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? String,
-           let url = httpURL(from: plist) {
-            return url
-        }
-        if let url = URL(dataRepresentation: data, relativeTo: nil), isHTTP(url) {
+        // Browser address-bar / plain Copy often puts only UTF-8 text on the clipboard.
+        if let string = pasteboard.string(forType: .string), let url = httpURL(from: string) {
             return url
         }
         return nil

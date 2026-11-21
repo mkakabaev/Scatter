@@ -11,6 +11,8 @@ final class AppStore: ObservableObject {
     @Published var isMainWindowVisible: Bool = false
     /// Incremented each time Settings should be shown (edge-trigger-safe reopen).
     @Published private(set) var settingsRequestID: Int = 0
+    /// Incremented each time the canvas should paste from the clipboard (⌘V).
+    @Published private(set) var pasteRequestID: Int = 0
     /// Item whose background palette is open. Transient; not persisted.
     @Published var backgroundPickerItemID: UUID?
     /// True while the system eyedropper (`NSColorSampler`) is on screen.
@@ -31,6 +33,11 @@ final class AppStore: ObservableObject {
     func requestSettings() {
         backgroundPickerItemID = nil
         settingsRequestID &+= 1
+    }
+
+    func requestPaste() {
+        backgroundPickerItemID = nil
+        pasteRequestID &+= 1
     }
 
     private let fileURL: URL

@@ -118,6 +118,9 @@ struct FreeformCanvasView: View {
             .padding(.top, 12)
             .onAppear { canvasSize = geo.size }
             .onChange(of: geo.size) { _, newSize in canvasSize = newSize }
+            .onChange(of: store.pasteRequestID) { _, _ in
+                pasteFromClipboard()
+            }
             .onChange(of: store.visibleItems.map(\.id)) { _, ids in
                 if let id = store.backgroundPickerItemID, !ids.contains(id) {
                     store.backgroundPickerItemID = nil
@@ -396,10 +399,84 @@ struct FreeformCanvasView: View {
             x: max(0, location.x - itemWidth / 2),
             y: max(0, location.y - itemHeight / 2)
         )
-        let title = ItemOpener.draggedWebTitle()
+        let title = ItemOpener.draggedWebLink()?.title
+        ingestURLs(urls, proposing: dropPoint, linkTitle: title)
+    }
+
+    /// ⌘V: same ingest as drop. Prefer the cell under the pointer when it is over the canvas;
+    /// otherwise the next free grid cell(s).
+    private func pasteFromClipboard() {
+        let pasteboard = NSPasteboard.general
+        let urls = ItemOpener.urls(from: pasteboard)
+        guard !urls.isEmpty else { return }
+        let title = ItemOpener.clipboardWebLink()?.title
+
+        if let location = canvasPointUnderMouse() {
+            let dropPoint = CGPoint(
+                x: max(0, location.x - itemWidth / 2),
+                y: max(0, location.y - itemHeight / 2)
+            )
+            ingestURLs(urls, proposing: dropPoint, linkTitle: title)
+            return
+        }
+
+        var proposing = SnapToGrid.nextFreePosition(
+            items: store.visibleItems,
+            settings: store.state.settings,
+            canvasSize: canvasSize
+        )
+        var awaitingOpenChoice: [LauncherItem] = []
+        var occupied = store.visibleItems
+        for url in urls {
+            guard let item = ItemOpener.makeItem(from: url, at: proposing, title: title) else { continue }
+            if item.kind == .file || item.kind == .folder {
+                awaitingOpenChoice.append(item)
+                occupied.append(item)
+            } else if item.kind == .url {
+                store.addWebLink(item)
+                occupied.append(item)
+            } else {
+                store.addItemFromFinder(item, openWithCursor: false)
+                occupied.append(item)
+            }
+            proposing = SnapToGrid.nextFreePosition(
+                items: occupied,
+                settings: store.state.settings,
+                canvasSize: canvasSize
+            )
+        }
+        if !awaitingOpenChoice.isEmpty {
+            pendingDrop = PendingDrop(items: awaitingOpenChoice)
+        }
+    }
+
+    /// Pointer location in the canvas drop view when it sits over that view; else nil (sidebar / outside).
+    private func canvasPointUnderMouse() -> CGPoint? {
+        guard let window = NSApp.windows.first(where: { $0 is LauncherWindow && $0.isVisible })
+                ?? NSApp.keyWindow,
+              let canvas = Self.canvasDropView(in: window.contentView) else {
+            return nil
+        }
+        let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let local = canvas.convert(windowPoint, from: nil)
+        guard canvas.bounds.contains(local) else { return nil }
+        return local
+    }
+
+    private static func canvasDropView(in root: NSView?) -> WindowBackgroundDragNSView? {
+        guard let root else { return nil }
+        if let drag = root as? WindowBackgroundDragNSView, drag.onURLsDropped != nil {
+            return drag
+        }
+        for child in root.subviews {
+            if let found = canvasDropView(in: child) { return found }
+        }
+        return nil
+    }
+
+    private func ingestURLs(_ urls: [URL], proposing dropPoint: CGPoint, linkTitle: String?) {
         var awaitingOpenChoice: [LauncherItem] = []
         for url in urls {
-            let linkTitle = url.isFileURL ? title : (ItemOpener.draggedWebLink()?.title ?? title)
             guard let item = ItemOpener.makeItem(from: url, at: dropPoint, title: linkTitle) else { continue }
             if item.kind == .file || item.kind == .folder {
                 awaitingOpenChoice.append(item)

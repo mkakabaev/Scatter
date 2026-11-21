@@ -136,6 +136,15 @@ struct MainWindowView: View {
             return event
         }
 
+        // ⌘V — paste Finder paths / http(s) from the clipboard onto the canvas.
+        // Runs before the background-picker swallow so paste still works with the palette open.
+        if Self.isCommandOnly(event),
+           let chars = event.charactersIgnoringModifiers,
+           chars.lowercased() == "v" {
+            store.requestPaste()
+            return nil
+        }
+
         if store.backgroundPickerItemID != nil {
             if event.keyCode == 53 { // escape — close the palette, keep the window
                 store.backgroundPickerItemID = nil
@@ -236,6 +245,13 @@ struct MainWindowView: View {
     private static func isEditingText() -> Bool {
         let responder = NSApp.keyWindow?.firstResponder
         return responder is NSTextView || responder is NSTextField
+    }
+
+    /// Command without Option/Control (Shift alone is fine — e.g. ⌘⇧V).
+    private static func isCommandOnly(_ event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.shift, .capsLock, .numericPad, .function])
+        return mods == .command
     }
 
     private func moveCanvasSelection(keyCode: UInt16) {
