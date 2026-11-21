@@ -14,7 +14,7 @@ Inspired by [Overflow 3](https://stuntsoftware.com/overflow/) from Stunt Softwar
 
 ## Usage
 
-Drop a **file**, **folder**, or **URL** onto the canvas. That’s it. Colorize a tile if you need it to stand out.
+Add a **file**, **folder**, or **URL** to the canvas — drop it from Finder, paste from the clipboard (⌘V), or right-click empty canvas and choose **Add…**. Colorize a tile if you need it to stand out.
 
 - Apps open as usual
 - Files and folders open with the system default — or an app you choose
