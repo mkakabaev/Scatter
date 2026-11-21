@@ -10,6 +10,9 @@ final class AppStore: ObservableObject {
     /// Highlight in the search overlay results list only — never drives canvas selection.
     @Published var searchSelectedItemID: UUID?
     @Published var selectedItemID: UUID?
+    /// Transient accent target while an item context menu is open. Not persisted.
+    /// When non-nil, canvas highlight follows this ID instead of `selectedItemID`.
+    @Published private(set) var contextMenuItemID: UUID?
     /// Explicit multi-select mode for the open collection. Transient; not persisted.
     @Published private(set) var isSelectingItems = false
     /// IDs toggled while `isSelectingItems`. Transient; not persisted.
@@ -38,8 +41,26 @@ final class AppStore: ObservableObject {
 
     func requestSettings() {
         backgroundPickerItemID = nil
+        clearContextMenuHighlight()
         exitItemSelection()
         settingsRequestID &+= 1
+    }
+
+    /// Highlight the item under an opening context menu (normal mode only).
+    func beginContextMenuHighlight(itemID: UUID) {
+        guard !isSelectingItems else { return }
+        contextMenuItemID = itemID
+    }
+
+    func clearContextMenuHighlight() {
+        contextMenuItemID = nil
+    }
+
+    /// Empty-canvas context menu: drop menu highlight and normal selection.
+    func clearSelectionForEmptyContextMenu() {
+        guard !isSelectingItems else { return }
+        contextMenuItemID = nil
+        selectedItemID = nil
     }
 
     func requestPaste() {
@@ -50,6 +71,7 @@ final class AppStore: ObservableObject {
     /// Enter multi-select mode. `seed` is the initial set (item **Select…** seeds that tile).
     func enterItemSelection(seeding seed: Set<UUID> = []) {
         backgroundPickerItemID = nil
+        clearContextMenuHighlight()
         isSelectingItems = true
         selectedItemIDs = seed.filter { findItem($0) != nil }
     }
@@ -204,6 +226,7 @@ final class AppStore: ObservableObject {
         isMainWindowVisible = false
         clearSearch()
         selectedItemID = nil
+        clearContextMenuHighlight()
         exitItemSelection()
         backgroundPickerItemID = nil
         openFailure = nil
@@ -231,6 +254,7 @@ final class AppStore: ObservableObject {
     func selectCollection(_ id: UUID) {
         mutate { $0.settings.selectedCollectionID = id }
         selectedItemID = nil
+        clearContextMenuHighlight()
         clearSearch()
         exitItemSelection()
         backgroundPickerItemID = nil

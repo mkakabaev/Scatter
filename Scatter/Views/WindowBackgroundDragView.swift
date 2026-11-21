@@ -54,35 +54,65 @@ struct WindowBackgroundDragView: NSViewRepresentable {
         }
     }
 
+    struct ItemFrame {
+        var id: UUID
+        var frame: CGRect
+    }
+
     var onClick: () -> Void
     /// Right-click menu for empty canvas / sidebar padding (AppKit — reliable over NSView).
     var contextMenuItems: [MenuItem] = []
+    /// Called when the empty-area context menu is about to appear.
+    var onContextMenuOpen: (() -> Void)? = nil
     /// Dropped file/http URLs and the drop point in flipped view coordinates.
     var onURLsDropped: (([URL], CGPoint) -> Void)? = nil
+    /// Canvas item frames in this view’s flipped coordinates (for context-menu highlight).
+    var itemFrames: [ItemFrame] = []
+    /// Right-click on an item frame → transient highlight (canvas only).
+    var onItemContextMenuHighlight: ((UUID) -> Void)? = nil
+    var onItemContextMenuHighlightClear: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> WindowBackgroundDragNSView {
         let view = WindowBackgroundDragNSView()
-        view.onClick = onClick
-        view.contextMenuItems = contextMenuItems
-        view.onURLsDropped = onURLsDropped
+        apply(to: view)
         return view
     }
 
     func updateNSView(_ nsView: WindowBackgroundDragNSView, context: Context) {
-        nsView.onClick = onClick
-        nsView.contextMenuItems = contextMenuItems
-        nsView.onURLsDropped = onURLsDropped
+        apply(to: nsView)
+    }
+
+    private func apply(to view: WindowBackgroundDragNSView) {
+        view.onClick = onClick
+        view.contextMenuItems = contextMenuItems
+        view.onContextMenuOpen = onContextMenuOpen
+        view.onURLsDropped = onURLsDropped
+        view.itemFrames = itemFrames
+        view.onItemContextMenuHighlight = onItemContextMenuHighlight
+        view.onItemContextMenuHighlightClear = onItemContextMenuHighlightClear
+        view.updateHighlightMonitoring()
     }
 }
 
 final class WindowBackgroundDragNSView: NSView {
     var onClick: (() -> Void)?
     var contextMenuItems: [WindowBackgroundDragView.MenuItem] = []
+    var onContextMenuOpen: (() -> Void)?
     var onURLsDropped: (([URL], CGPoint) -> Void)?
+    var itemFrames: [WindowBackgroundDragView.ItemFrame] = []
+    var onItemContextMenuHighlight: ((UUID) -> Void)?
+    var onItemContextMenuHighlightClear: (() -> Void)?
 
     private var lastMenuPoint: CGPoint = .zero
     /// Retains leaf-item targets for the open context menu.
     private var menuHandlers: [ContextMenuHandler] = []
+
+    private var rightMouseMonitor: Any?
+    private var menuBeginObserver: NSObjectProtocol?
+    private var menuEndObserver: NSObjectProtocol?
+    /// Item highlight is live; clear only after a matching `didBeginTracking` → `didEndTracking`.
+    private var itemHighlightMenuTracking = false
+    private var itemHighlightPendingMenu = false
 
     /// Match item-drag threshold in `FreeformCanvasView`.
     private let dragThreshold: CGFloat = 4
@@ -106,12 +136,105 @@ final class WindowBackgroundDragNSView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        tearDownHighlightMonitoring()
+    }
+
+    func updateHighlightMonitoring() {
+        if onItemContextMenuHighlight != nil {
+            installHighlightMonitoring()
+        } else {
+            tearDownHighlightMonitoring()
+        }
+    }
+
+    private func installHighlightMonitoring() {
+        guard rightMouseMonitor == nil else { return }
+        rightMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
+            self?.handleRightMouseDownForItemHighlight(event)
+            return event
+        }
+        menuBeginObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleMenuDidBeginTracking()
+        }
+        menuEndObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleMenuDidEndTracking()
+        }
+    }
+
+    private func tearDownHighlightMonitoring() {
+        if let rightMouseMonitor {
+            NSEvent.removeMonitor(rightMouseMonitor)
+        }
+        rightMouseMonitor = nil
+        if let menuBeginObserver {
+            NotificationCenter.default.removeObserver(menuBeginObserver)
+        }
+        menuBeginObserver = nil
+        if let menuEndObserver {
+            NotificationCenter.default.removeObserver(menuEndObserver)
+        }
+        menuEndObserver = nil
+        itemHighlightMenuTracking = false
+        itemHighlightPendingMenu = false
+    }
+
+    private func handleRightMouseDownForItemHighlight(_ event: NSEvent) {
+        guard onItemContextMenuHighlight != nil else { return }
+        guard let window, event.window === window else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point) else { return }
+
+        var hit: UUID?
+        for item in itemFrames where item.frame.contains(point) {
+            hit = item.id
+        }
+        guard let hit else { return }
+
+        itemHighlightPendingMenu = true
+        itemHighlightMenuTracking = false
+        onItemContextMenuHighlight?(hit)
+    }
+
+    private func handleMenuDidBeginTracking() {
+        guard itemHighlightPendingMenu else { return }
+        itemHighlightPendingMenu = false
+        itemHighlightMenuTracking = true
+    }
+
+    private func handleMenuDidEndTracking() {
+        guard itemHighlightMenuTracking else { return }
+        itemHighlightMenuTracking = false
+        onItemContextMenuHighlightClear?()
+    }
+
+    func clearItemHighlightSession() {
+        itemHighlightPendingMenu = false
+        itemHighlightMenuTracking = false
+        onItemContextMenuHighlightClear?()
+    }
+
     // MARK: - Context menu
 
     override func menu(for event: NSEvent) -> NSMenu? {
         guard !contextMenuItems.isEmpty else { return nil }
         lastMenuPoint = convert(event.locationInWindow, from: nil)
+        // Item tiles sit above this view in SwiftUI, but AppKit may still ask us for a menu.
+        // Defer to the item’s SwiftUI `.contextMenu` and do not clear the item highlight.
+        if itemFrames.contains(where: { $0.frame.contains(lastMenuPoint) }) {
+            return nil
+        }
         menuHandlers.removeAll(keepingCapacity: true)
+        clearItemHighlightSession()
+        onContextMenuOpen?()
         return buildMenu(from: contextMenuItems, point: lastMenuPoint)
     }
 
@@ -130,6 +253,8 @@ final class WindowBackgroundDragNSView: NSView {
             if let children = item.children {
                 let mi = NSMenuItem(title: item.title, action: nil, keyEquivalent: "")
                 mi.submenu = buildMenu(from: children, point: point)
+                // Disable the parent when every leaf under it is disabled.
+                mi.isEnabled = hasEnabledLeaf(in: children, point: point)
                 menu.addItem(mi)
                 continue
             }
@@ -148,6 +273,20 @@ final class WindowBackgroundDragNSView: NSView {
         return menu
     }
 
+    private func hasEnabledLeaf(
+        in items: [WindowBackgroundDragView.MenuItem],
+        point: CGPoint
+    ) -> Bool {
+        for item in items {
+            if item.isSeparator { continue }
+            if let children = item.children {
+                if hasEnabledLeaf(in: children, point: point) { return true }
+                continue
+            }
+            if item.isEnabled?(point) ?? true { return true }
+        }
+        return false
+    }
 }
 
 /// Leaf context-menu action target. Kept alive by `WindowBackgroundDragNSView.menuHandlers`.
@@ -204,6 +343,9 @@ extension WindowBackgroundDragNSView {
         guard event.type == .leftMouseDown, let window else { return }
         let start = event.locationInWindow
         var didMoveWindow = false
+
+        // Left-click ends any stuck item-menu highlight (e.g. menu begin never arrived).
+        clearItemHighlightSession()
 
         window.trackEvents(
             matching: [.leftMouseDragged, .leftMouseUp],

@@ -54,12 +54,29 @@ struct FreeformCanvasView: View {
                 WindowBackgroundDragView(
                     onClick: {
                         if store.isSelectingItems { return }
+                        store.clearContextMenuHighlight()
                         store.selectedItemID = nil
                     },
                     contextMenuItems: emptyCanvasContextMenuItems,
+                    onContextMenuOpen: {
+                        store.clearSelectionForEmptyContextMenu()
+                    },
                     onURLsDropped: { urls, point in
                         handleCanvasURLs(urls, at: point)
-                    }
+                    },
+                    itemFrames: store.isSelectingItems ? [] : orderedItems.map {
+                        .init(
+                            id: $0.id,
+                            frame: CGRect(
+                                x: $0.position.cgPoint.x,
+                                y: $0.position.cgPoint.y,
+                                width: itemWidth,
+                                height: itemHeight
+                            )
+                        )
+                    },
+                    onItemContextMenuHighlight: { store.beginContextMenuHighlight(itemID: $0) },
+                    onItemContextMenuHighlightClear: { store.clearContextMenuHighlight() }
                 )
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
 
@@ -282,6 +299,10 @@ struct FreeformCanvasView: View {
     private func itemIsSelected(_ item: LauncherItem) -> Bool {
         if store.isSelectingItems {
             return store.selectedItemIDs.contains(item.id)
+        }
+        // While a context menu is open, only the menu target shows the accent stroke.
+        if let menuID = store.contextMenuItemID {
+            return item.id == menuID
         }
         return store.selectedItemID == item.id
     }
@@ -546,6 +567,7 @@ struct FreeformCanvasView: View {
     @ViewBuilder
     private func itemContextMenu(_ item: LauncherItem) -> some View {
         if store.isSelectingItems {
+            // Keep multi-selection as-is; menu already batches when the tile is in the set.
             selectionModeItemContextMenu(item)
         } else {
             normalItemContextMenu(item)
@@ -609,11 +631,11 @@ struct FreeformCanvasView: View {
             }
         }
         Menu("Layout") {
-            Button("Insert Row") {
+            Button("Insert Row Above") {
                 store.insertEmptyRow(beforeItem: item.id)
             }
             .disabled(!SnapToGrid.canInsertEmptyRow(before: item.gridRow, items: store.visibleItems))
-            Button("Insert Column") {
+            Button("Insert Column to the Left") {
                 store.insertEmptyColumn(beforeItem: item.id)
             }
         }
