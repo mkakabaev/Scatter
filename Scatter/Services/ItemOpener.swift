@@ -448,13 +448,20 @@ enum ItemOpener {
         webLink(on: .general)
     }
 
-    /// Prefer on-disk file URLs; otherwise http(s); otherwise any URL. Shared by Finder drop and ⌘V.
+    /// Prefer on-disk file URLs; otherwise VS Code/Cursor `code/file-list`; otherwise http(s); otherwise any URL.
+    /// Shared by Finder drop and ⌘V.
     static func urls(from pasteboard: NSPasteboard) -> [URL] {
         if let files = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !files.isEmpty {
             return files.filter { FileManager.default.fileExists(atPath: $0.path) }
+        }
+
+        // VS Code / Cursor Explorer copy: private type with newline-separated URI strings.
+        // Readable at pasteboard level even when macOS stores it under a dyn. UTI on the item.
+        if let codeList = urlsFromCodeFileList(on: pasteboard), !codeList.isEmpty {
+            return codeList
         }
 
         if let link = webLink(on: pasteboard) {
@@ -473,12 +480,28 @@ enum ItemOpener {
         return []
     }
 
+    /// VS Code / Cursor `code/file-list`: UTF-8 newline-separated URIs (typically `file://…`).
+    private static func urlsFromCodeFileList(on pasteboard: NSPasteboard) -> [URL]? {
+        guard let data = pasteboard.data(forType: codeFileListType),
+              let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            return nil
+        }
+        let urls = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .compactMap { URL(string: String($0)) }
+        return urls.isEmpty ? nil : urls
+    }
+
     static func webLink(on pasteboard: NSPasteboard) -> DraggedWebLink? {
         guard let url = webURL(on: pasteboard) else { return nil }
         return DraggedWebLink(url: url, title: pasteboard.string(forType: urlNameType))
     }
 
     private static let urlNameType = NSPasteboard.PasteboardType("public.url-name")
+    /// VS Code / Cursor Explorer file copy (Electron `clipboard.writeBuffer("code/file-list", …)`).
+    private static let codeFileListType = NSPasteboard.PasteboardType("code/file-list")
 
     private static func webURL(on pasteboard: NSPasteboard) -> URL? {
         if let string = pasteboard.string(forType: .URL), let url = httpURL(from: string) {

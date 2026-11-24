@@ -716,7 +716,10 @@ struct FreeformCanvasView: View {
     private func pasteFromClipboard() {
         let pasteboard = NSPasteboard.general
         let urls = ItemOpener.urls(from: pasteboard)
-        guard !urls.isEmpty else { return }
+        guard !urls.isEmpty else {
+            NSSound.beep()
+            return
+        }
         let title = ItemOpener.clipboardWebLink()?.title
 
         if let location = canvasPointUnderMouse() {
