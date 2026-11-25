@@ -4,7 +4,8 @@ import AppKit
 struct MainWindowView: View {
     @EnvironmentObject private var store: AppStore
     @State private var renameText: String = ""
-    @State private var isRenaming = false
+    /// Collection the Rename… context menu was opened on. Not the active selection.
+    @State private var renameCollectionID: UUID?
     @State private var newCollectionName = ""
     @State private var showNewCollection = false
     /// Live splitter width while dragging. Nil uses the saved preference.
@@ -21,7 +22,7 @@ struct MainWindowView: View {
                         onRequestNew: { showNewCollection = true },
                         onRequestRename: { collection in
                             renameText = collection.name
-                            isRenaming = true
+                            renameCollectionID = collection.id
                         }
                     )
                     .frame(width: width)
@@ -96,14 +97,18 @@ struct MainWindowView: View {
                 newCollectionName = ""
             }
         }
-        .alert("Rename Collection", isPresented: $isRenaming) {
+        .alert("Rename Collection", isPresented: Binding(
+            get: { renameCollectionID != nil },
+            set: { if !$0 { renameCollectionID = nil } }
+        )) {
             TextField("Name", text: $renameText)
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) { renameCollectionID = nil }
             Button("Rename") {
-                if let id = store.selectedCollection?.id {
+                if let id = renameCollectionID {
                     let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !name.isEmpty { store.renameCollection(id, to: name) }
                 }
+                renameCollectionID = nil
             }
         }
         // Accept keyboard focus for type-to-search / arrows; no system focus ring
