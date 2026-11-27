@@ -1,8 +1,10 @@
 import AppKit
+import SwiftUI
 import UniformTypeIdentifiers
 
 enum IconProvider {
     /// Main tile icon. `.code-workspace` files always use Cursor’s icon.
+    @MainActor
     static func icon(for item: LauncherItem, size: CGFloat) -> NSImage {
         let image: NSImage
         if isCodeWorkspace(item), let cursor = CursorLocator.applicationURL {
@@ -45,61 +47,50 @@ enum IconProvider {
     }
 
     /// Apple’s macOS icon grid: an 824 px body centered on a 1024 px canvas (100 px transparent margin).
-    private static let macOSIconContentScale: CGFloat = 824.0 / 1024.0
+    fileprivate static let macOSIconContentScale: CGFloat = 824.0 / 1024.0
+
+    /// Corner radius as a fraction of the favicon body side — matches macOS app-icon continuous rounding (~22.37%).
+    fileprivate static let webIconCornerRadiusFraction: CGFloat = 0.2237
 
     /// Draw `image` at the icon-grid body size so a full-bleed favicon matches neighboring app icons.
-    /// The bitmap context’s user space is `bitmap.size` (the pixel size, at 72 dpi). Draw in that space, then
-    /// assign the tile’s point size. Drawing in raw pixels after shrinking `size` pins the graphic to the top-right.
+    /// Web icons get a continuous (squircle) clip via SwiftUI `RoundedRectangle(..., style: .continuous)`.
+    @MainActor
     private static func insetLikeMacOSIcon(_ image: NSImage, pointSize: CGFloat) -> NSImage {
         let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
-        let pixels = max(1, Int((pointSize * scale).rounded()))
-        guard let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: pixels,
-            pixelsHigh: pixels,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
+        let renderer = ImageRenderer(content: WebIconCanvas(image: image, pointSize: pointSize))
+        renderer.scale = scale
+        guard let rendered = renderer.nsImage else {
             return scaled(image, to: pointSize)
         }
-
-        let canvasSide = max(bitmap.size.width, bitmap.size.height, 1)
-        let content = canvasSide * macOSIconContentScale
-        let source = image.size
-        let sourceSide = max(source.width, source.height, 1)
-        let fitted = content / sourceSide
-        let drawSize = NSSize(width: source.width * fitted, height: source.height * fitted)
-        let origin = NSPoint(
-            x: (bitmap.size.width - drawSize.width) / 2,
-            y: (bitmap.size.height - drawSize.height) / 2
-        )
-
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(
-            in: NSRect(origin: origin, size: drawSize),
-            from: NSRect(origin: .zero, size: source),
-            operation: .sourceOver,
-            fraction: 1
-        )
-        NSGraphicsContext.restoreGraphicsState()
-
-        bitmap.size = NSSize(width: pointSize, height: pointSize)
-        let canvas = NSImage(size: bitmap.size)
-        canvas.addRepresentation(bitmap)
-        canvas.isTemplate = false
-        return canvas
+        rendered.isTemplate = false
+        return rendered
     }
 
     private static func scaled(_ image: NSImage, to size: CGFloat) -> NSImage {
         let copy = image.copy() as? NSImage ?? image
         copy.size = NSSize(width: size, height: size)
         return copy
+    }
+}
+
+/// Favicon inset on the macOS icon grid, clipped with a continuous squircle.
+private struct WebIconCanvas: View {
+    let image: NSImage
+    let pointSize: CGFloat
+
+    var body: some View {
+        let content = pointSize * IconProvider.macOSIconContentScale
+        let source = image.size
+        let sourceSide = max(source.width, source.height, 1)
+        let fitted = content / sourceSide
+        let drawSize = CGSize(width: source.width * fitted, height: source.height * fitted)
+        let cornerRadius = min(drawSize.width, drawSize.height) * IconProvider.webIconCornerRadiusFraction
+
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: drawSize.width, height: drawSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .frame(width: pointSize, height: pointSize)
     }
 }
