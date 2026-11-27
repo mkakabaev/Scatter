@@ -23,10 +23,10 @@ enum WebLinkFetcher {
     private static let htmlByteLimit = 256 * 1024
     private static let manifestByteLimit = 64 * 1024
     private static let imageByteLimit = 1_500_000
-    /// Largest side stored in `iconPNGData`. Sized for Settings max icon points at 2× Retina
-    /// (`TileMetrics.maxIconSize * 2`), not the live slider — favicons are fetched once at drop
-    /// and must stay sharp if the user later raises icon size. Bigger sources scale down; never up.
-    private static let maxIconPixels = Int(TileMetrics.maxIconSize) * 2
+    /// Largest side stored in `iconPNGData`. Favicons are fetched once at drop and must stay sharp
+    /// if the user later raises Settings icon size. Floor at 512 so common apple-touch / touch-icon
+    /// sources (180–512) are kept at full strength; never upscale smaller bitmaps.
+    private static let maxIconPixels = max(Int(TileMetrics.maxIconSize) * 2, 512)
     private static let maxDownloads = 8
 
     /// Favicon PNG plus page title from the same HTML fetch (`og:title` / `twitter:title` / `<title>`).
@@ -41,23 +41,23 @@ enum WebLinkFetcher {
             }
             if let html = decodeHTML(page.data) {
                 title = pageTitle(in: html)
-                // Manifest icons first: sites like ya.ru ship 512px there and only soft 192px in <link>.
+                // macOS / Safari-oriented order: square OG touch art, then apple-touch, then
+                // manifest / generic <link rel=icon>, then well-known paths. Largest wins after decode.
+                if let og = squareOGImageURL(in: html, base: page.finalURL) {
+                    candidates.append(og)
+                }
+                candidates.append(contentsOf: appleTouchIconURLs(in: html, base: page.finalURL))
                 if let manifest = manifestURL(in: html, base: page.finalURL) {
                     candidates.append(contentsOf: await manifestIconURLs(from: manifest))
                 }
-                candidates.append(contentsOf: iconURLs(in: html, base: page.finalURL))
+                candidates.append(contentsOf: genericIconURLs(in: html, base: page.finalURL))
             }
-            // Always try the dropped URL's /favicon.ico. Auth/SSO redirects change finalURL,
-            // and that host's icon is often useless while the original origin still serves one.
-            if let fallback = faviconURL(from: pageURL) {
-                candidates.append(fallback)
+            appendWellKnownIconFallbacks(to: &candidates, from: pageURL)
+            if !sameHost(pageURL, page.finalURL) {
+                appendWellKnownIconFallbacks(to: &candidates, from: page.finalURL)
             }
-            // After a host change (apex → www, etc.), also try the final host.
-            if !sameHost(pageURL, page.finalURL), let fallback = faviconURL(from: page.finalURL) {
-                candidates.append(fallback)
-            }
-        } else if let fallback = faviconURL(from: pageURL) {
-            candidates = [fallback]
+        } else {
+            appendWellKnownIconFallbacks(to: &candidates, from: pageURL)
         }
 
         var seen = Set<String>()
@@ -72,6 +72,8 @@ enum WebLinkFetcher {
             if best == nil || rendered.sourceArea > best!.sourceArea {
                 best = rendered
             }
+            // Good enough for Settings max @2× (and the 512 floor) — skip weaker leftovers.
+            if let best, best.sourceSide >= maxIconPixels { break }
         }
         return PageAssets(png: best?.png, title: title)
     }
@@ -87,6 +89,7 @@ enum WebLinkFetcher {
     }
 
     private struct RenderedIcon {
+        var sourceSide: Int
         var sourceArea: Int
         var png: Data
     }
@@ -288,7 +291,39 @@ enum WebLinkFetcher {
         return orderedIconURLs(refs)
     }
 
-    private static func iconURLs(in html: String, base: URL) -> [URL] {
+    /// Square `og:image` only (Avito ships a 512 touch icon here). Skips typical 1.91:1 share cards.
+    private static func squareOGImageURL(in html: String, base: URL) -> URL? {
+        guard let raw = metaContent(in: html, property: "og:image") else { return nil }
+        let decoded = raw
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !decoded.isEmpty, !decoded.lowercased().hasPrefix("data:") else { return nil }
+        if decoded.lowercased().hasSuffix(".svg") { return nil }
+        guard let resolved = URL(string: decoded, relativeTo: base)?.absoluteURL, isHTTP(resolved) else {
+            return nil
+        }
+
+        let width = metaContent(in: html, property: "og:image:width").flatMap(Int.init)
+        let height = metaContent(in: html, property: "og:image:height").flatMap(Int.init)
+        if let width, let height {
+            guard width == height, width >= 32 else { return nil }
+        } else if !pathLooksLikeIcon(resolved) {
+            return nil
+        }
+        return resolved
+    }
+
+    /// `rel=apple-touch-icon` / `apple-touch-icon-precomposed` — Safari bookmark quality on macOS.
+    private static func appleTouchIconURLs(in html: String, base: URL) -> [URL] {
+        linkIconURLs(in: html, base: base) { isAppleTouchRel($0) }
+    }
+
+    /// Generic `rel=icon` / `shortcut icon` (excludes apple-touch and mask icons).
+    private static func genericIconURLs(in html: String, base: URL) -> [URL] {
+        linkIconURLs(in: html, base: base) { isGenericIconRel($0) }
+    }
+
+    private static func linkIconURLs(in html: String, base: URL, relMatch: (String) -> Bool) -> [URL] {
         guard let regex = try? NSRegularExpression(
             pattern: #"<link\b(?:[^>"']|"[^"]*"|'[^']*')*>"#,
             options: [.caseInsensitive]
@@ -299,7 +334,7 @@ enum WebLinkFetcher {
         for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
             let tag = ns.substring(with: match.range)
             let attrs = attributes(in: tag)
-            guard let rel = attrs["rel"]?.lowercased(), isIconRel(rel), let href = attrs["href"] else { continue }
+            guard let rel = attrs["rel"]?.lowercased(), relMatch(rel), let href = attrs["href"] else { continue }
             let decoded = href
                 .replacingOccurrences(of: "&amp;", with: "&")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -326,10 +361,45 @@ enum WebLinkFetcher {
         return ordered
     }
 
-    private static func isIconRel(_ rel: String) -> Bool {
-        let tokens = rel.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        if tokens.contains(where: { $0.contains("mask") }) { return false }
+    private static func relTokens(_ rel: String) -> [String] {
+        rel.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
+
+    private static func isAppleTouchRel(_ rel: String) -> Bool {
+        relTokens(rel).contains { $0.contains("apple-touch-icon") }
+    }
+
+    private static func isGenericIconRel(_ rel: String) -> Bool {
+        let tokens = relTokens(rel)
+        if tokens.contains(where: { $0.contains("mask") || $0.contains("apple-touch-icon") }) { return false }
         return tokens.contains { $0.contains("icon") }
+    }
+
+    private static func pathLooksLikeIcon(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return path.contains("icon") || path.contains("favicon") || path.contains("apple-touch")
+    }
+
+    /// Origin fallbacks when HTML is thin or blocked: apple-touch first (Safari-like), then favicon.ico.
+    private static func appendWellKnownIconFallbacks(to candidates: inout [URL], from pageURL: URL) {
+        if let touch = wellKnownURL(from: pageURL, path: "/apple-touch-icon.png") {
+            candidates.append(touch)
+        }
+        if let touchPre = wellKnownURL(from: pageURL, path: "/apple-touch-icon-precomposed.png") {
+            candidates.append(touchPre)
+        }
+        // Auth/SSO redirects change finalURL; the dropped origin often still serves a usable favicon.
+        if let favicon = wellKnownURL(from: pageURL, path: "/favicon.ico") {
+            candidates.append(favicon)
+        }
+    }
+
+    private static func wellKnownURL(from pageURL: URL, path: String) -> URL? {
+        guard var components = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) else { return nil }
+        components.path = path
+        components.query = nil
+        components.fragment = nil
+        return components.url
     }
 
     private static func largestSize(_ sizes: String) -> Int {
@@ -365,14 +435,6 @@ enum WebLinkFetcher {
         return result
     }
 
-    private static func faviconURL(from pageURL: URL) -> URL? {
-        guard var components = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) else { return nil }
-        components.path = "/favicon.ico"
-        components.query = nil
-        components.fragment = nil
-        return components.url
-    }
-
     private static func looksLikeImage(_ data: Data) -> Bool {
         if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return true }
         if data.starts(with: [0xFF, 0xD8, 0xFF]) { return true }
@@ -406,7 +468,11 @@ enum WebLinkFetcher {
         guard let rendered = context.makeImage() else { return nil }
         let bitmap = NSBitmapImageRep(cgImage: rendered)
         guard let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
-        return RenderedIcon(sourceArea: pixelsWide * pixelsHigh, png: png)
+        return RenderedIcon(
+            sourceSide: sourcePixels,
+            sourceArea: pixelsWide * pixelsHigh,
+            png: png
+        )
     }
 
     private static func largestCGImage(from data: Data) -> CGImage? {

@@ -655,25 +655,36 @@ struct FreeformCanvasView: View {
     @ViewBuilder
     private func urlOpenWithMenu(for item: LauncherItem) -> some View {
         let browsers = BrowserLocator.installedBrowsers
+        let selectedBrowser = ItemOpener.resolveOpenWithApp(for: item)?.standardizedFileURL
         Menu("Open With") {
-            if browsers.isEmpty {
-                Text("No Browsers Found")
-            } else {
-                ForEach(browsers, id: \.path) { browser in
-                    Button(OpenWithPanel.displayName(forApplicationAt: browser)) {
-                        open(item, withApplicationAt: browser, always: false)
-                    }
-                }
+            urlBrowserChoices(browsers, selected: selectedBrowser) { browser in
+                open(item, withApplicationAt: browser, always: false)
             }
         }
         Menu("Always Open in") {
-            if browsers.isEmpty {
-                Text("No Browsers Found")
-            } else {
-                ForEach(browsers, id: \.path) { browser in
-                    Button(OpenWithPanel.displayName(forApplicationAt: browser)) {
-                        open(item, withApplicationAt: browser, always: true)
-                    }
+            urlBrowserChoices(browsers, selected: selectedBrowser) { browser in
+                open(item, withApplicationAt: browser, always: true)
+            }
+        }
+    }
+
+    /// Browser list with a checkbox on the item’s current Open With app (if any).
+    @ViewBuilder
+    private func urlBrowserChoices(
+        _ browsers: [URL],
+        selected: URL?,
+        action: @escaping (URL) -> Void
+    ) -> some View {
+        if browsers.isEmpty {
+            Text("No Browsers Found")
+        } else {
+            ForEach(browsers, id: \.path) { browser in
+                let isSelected = selected == browser.standardizedFileURL
+                Toggle(isOn: Binding(
+                    get: { isSelected },
+                    set: { _ in action(browser) }
+                )) {
+                    Text(OpenWithPanel.displayName(forApplicationAt: browser))
                 }
             }
         }
