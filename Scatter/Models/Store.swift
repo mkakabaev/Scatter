@@ -359,14 +359,24 @@ final class AppStore: ObservableObject {
         }
     }
 
-    /// Add a web link, then replace the generic icon once its favicon arrives.
+    /// Add a web link, then fill favicon / page title once the HTML fetch completes.
+    /// Title upgrade only when the tile still shows the host fallback (no pasteboard `public.url-name`, no Rename yet).
     func addWebLink(_ item: LauncherItem) {
         addItemFromFinder(item, openWithCursor: false)
         guard item.kind == .url, let pageURL = item.resolvedURL() else { return }
         let itemID = item.id
+        let hostFallback = ItemOpener.webDisplayName(title: nil, url: pageURL)
+        let shouldUpgradeTitle = item.displayName == hostFallback
         Task {
-            guard let png = await FaviconFetcher.fetchPNG(for: pageURL) else { return }
-            setItemIcon(itemID, pngData: png)
+            let assets = await WebLinkFetcher.fetch(for: pageURL)
+            if let png = assets.png {
+                setItemIcon(itemID, pngData: png)
+            }
+            if shouldUpgradeTitle, let title = assets.title {
+                let upgraded = ItemOpener.webDisplayName(title: title, url: pageURL)
+                guard upgraded != hostFallback else { return }
+                setItemDisplayName(itemID, to: upgraded, onlyIfCurrentEquals: hostFallback)
+            }
         }
     }
 
@@ -375,6 +385,18 @@ final class AppStore: ObservableObject {
             for ci in $0.collections.indices {
                 guard let ii = $0.collections[ci].items.firstIndex(where: { $0.id == itemID }) else { continue }
                 $0.collections[ci].items[ii].iconPNGData = pngData
+                return
+            }
+        }
+    }
+
+    /// Async favicon/title path: only rename if the user has not already changed the label.
+    func setItemDisplayName(_ itemID: UUID, to name: String, onlyIfCurrentEquals expected: String) {
+        mutate {
+            for ci in $0.collections.indices {
+                guard let ii = $0.collections[ci].items.firstIndex(where: { $0.id == itemID }) else { continue }
+                guard $0.collections[ci].items[ii].displayName == expected else { return }
+                $0.collections[ci].items[ii].displayName = name
                 return
             }
         }

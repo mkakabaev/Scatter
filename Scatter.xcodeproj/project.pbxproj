@@ -21,10 +21,10 @@
 		647F9245D0444E3882F01824 /* ColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3625DF2ADA95B84AEEC25450 /* ColorHex.swift */; };
 		6589FE9DBDD63C0D5C4085D0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 631F4007B797BA34F6D7A4DC /* Assets.xcassets */; };
 		7322F7E0AE226D0C2A2B972B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C1A6B639FA664FA40FB364 /* SettingsView.swift */; };
-		7727B5F8BE92B82E12B95886 /* FaviconFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F52546CCB2B217A54B8C524 /* FaviconFetcher.swift */; };
 		8378E9C15053585B551C58B5 /* WindowBackgroundDragView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150CDDEF2D81937371444055 /* WindowBackgroundDragView.swift */; };
 		907EFDC3E3ED3A891BBEE417 /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBC7706031E3C496AD80F5F /* MainWindowView.swift */; };
 		9D10F27101298D304E19AD61 /* SearchHit.swift in Sources */ = {isa = PBXBuildFile; fileRef = F23D91DC1FBCD57952D1C831 /* SearchHit.swift */; };
+		A19112333BC61FA089630F48 /* WebLinkFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4F4FEB9F4E234492C20610 /* WebLinkFetcher.swift */; };
 		B0A1266F6CD322E9259B976C /* SearchOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04D630646F83650759A15C9 /* SearchOverlayView.swift */; };
 		B193AB4D1BE5F35E125FE521 /* TileMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2360A68F35F885CBADED16D6 /* TileMetrics.swift */; };
 		B60C2D1947947C0ACF8CA500 /* CollectionSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 907748FC4A5AF324475E4781 /* CollectionSidebar.swift */; };
@@ -57,7 +57,6 @@
 		73439A9E375583E5EF9EB3A3 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		7A970F47DFE7EB87E4432E85 /* LauncherItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherItemView.swift; sourceTree = "<group>"; };
 		7E2BC253B799C4B752FE578E /* ItemBackgroundPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemBackgroundPicker.swift; sourceTree = "<group>"; };
-		7F52546CCB2B217A54B8C524 /* FaviconFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconFetcher.swift; sourceTree = "<group>"; };
 		889CA59228A8CC07D8B08E5F /* AppMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMain.swift; sourceTree = "<group>"; };
 		8F01E0F309FC5E896337DFC2 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		907748FC4A5AF324475E4781 /* CollectionSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionSidebar.swift; sourceTree = "<group>"; };
@@ -69,6 +68,7 @@
 		B74F94D22733C2FF525C395C /* LauncherItemIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherItemIconView.swift; sourceTree = "<group>"; };
 		B8A7D292FF8672AD3DC232DF /* AddItemsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddItemsPanel.swift; sourceTree = "<group>"; };
 		BB183AB2680419761B8F06CB /* Scatter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Scatter.entitlements; sourceTree = "<group>"; };
+		BE4F4FEB9F4E234492C20610 /* WebLinkFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebLinkFetcher.swift; sourceTree = "<group>"; };
 		DD34F2881CE2C64129FF6E2C /* IconProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconProvider.swift; sourceTree = "<group>"; };
 		E4D014A09EE92053C06A6603 /* SidebarLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarLayout.swift; sourceTree = "<group>"; };
 		E8938ECF89184377DD4870A9 /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemManager.swift; sourceTree = "<group>"; };
@@ -109,7 +109,6 @@
 				352B932B5D9149204DCDE002 /* BrowserLocator.swift */,
 				3625DF2ADA95B84AEEC25450 /* ColorHex.swift */,
 				3A9B61C0F009E0405834FABB /* CursorLocator.swift */,
-				7F52546CCB2B217A54B8C524 /* FaviconFetcher.swift */,
 				34CA15542A5014170AC4C24E /* HotkeyManager.swift */,
 				DD34F2881CE2C64129FF6E2C /* IconProvider.swift */,
 				F0D107EE4674B2997566A6EA /* ItemOpener.swift */,
@@ -118,6 +117,7 @@
 				E4D014A09EE92053C06A6603 /* SidebarLayout.swift */,
 				F1C53DBE148B3C27511929BE /* SnapToGrid.swift */,
 				2360A68F35F885CBADED16D6 /* TileMetrics.swift */,
+				BE4F4FEB9F4E234492C20610 /* WebLinkFetcher.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -267,7 +267,6 @@
 				B60C2D1947947C0ACF8CA500 /* CollectionSidebar.swift in Sources */,
 				647F9245D0444E3882F01824 /* ColorHex.swift in Sources */,
 				E311982427C83AD75B1A9CEB /* CursorLocator.swift in Sources */,
-				7727B5F8BE92B82E12B95886 /* FaviconFetcher.swift in Sources */,
 				241D54A995B814D9C331D962 /* FreeformCanvasView.swift in Sources */,
 				D31CFEA9AB03FDE0B5CEFF77 /* HotkeyManager.swift in Sources */,
 				CCD9AFBF5DFACDE74DCFEDA1 /* IconProvider.swift in Sources */,
@@ -287,6 +286,7 @@
 				D81C6444127EE4B2A55938A2 /* SnapToGrid.swift in Sources */,
 				3F13BC56BF067B441E32B92B /* Store.swift in Sources */,
 				B193AB4D1BE5F35E125FE521 /* TileMetrics.swift in Sources */,
+				A19112333BC61FA089630F48 /* WebLinkFetcher.swift in Sources */,
 				8378E9C15053585B551C58B5 /* WindowBackgroundDragView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -2,8 +2,13 @@ import AppKit
 import Foundation
 import ImageIO
 
-/// Loads a site icon for a dropped http(s) link and returns PNG bytes for the tile.
-enum FaviconFetcher {
+/// Loads favicon PNG and page title for a dropped/pasted http(s) link (one shared HTML prefix fetch).
+enum WebLinkFetcher {
+    struct PageAssets {
+        var png: Data?
+        var title: String?
+    }
+
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 8
@@ -18,19 +23,24 @@ enum FaviconFetcher {
     private static let htmlByteLimit = 256 * 1024
     private static let manifestByteLimit = 64 * 1024
     private static let imageByteLimit = 1_500_000
-    /// Largest side stored. 128 pt tiles at 2x need 256 px; anything bigger is scaled down, never up.
-    private static let maxIconPixels = 256
+    /// Largest side stored in `iconPNGData`. Sized for Settings max icon points at 2× Retina
+    /// (`TileMetrics.maxIconSize * 2`), not the live slider — favicons are fetched once at drop
+    /// and must stay sharp if the user later raises icon size. Bigger sources scale down; never up.
+    private static let maxIconPixels = Int(TileMetrics.maxIconSize) * 2
     private static let maxDownloads = 8
 
-    static func fetchPNG(for pageURL: URL) async -> Data? {
-        guard isHTTP(pageURL) else { return nil }
+    /// Favicon PNG plus page title from the same HTML fetch (`og:title` / `twitter:title` / `<title>`).
+    static func fetch(for pageURL: URL) async -> PageAssets {
+        guard isHTTP(pageURL) else { return PageAssets() }
 
         var candidates: [URL] = []
+        var title: String?
         if let page = await fetchPrefix(from: pageURL, limit: htmlByteLimit) {
             if looksLikeImage(page.data), let rendered = await renderedPNG(from: page.data) {
-                return rendered.png
+                return PageAssets(png: rendered.png, title: nil)
             }
-            if let html = String(data: page.data, encoding: .utf8) ?? String(data: page.data, encoding: .isoLatin1) {
+            if let html = decodeHTML(page.data) {
+                title = pageTitle(in: html)
                 // Manifest icons first: sites like ya.ru ship 512px there and only soft 192px in <link>.
                 if let manifest = manifestURL(in: html, base: page.finalURL) {
                     candidates.append(contentsOf: await manifestIconURLs(from: manifest))
@@ -63,7 +73,7 @@ enum FaviconFetcher {
                 best = rendered
             }
         }
-        return best?.png
+        return PageAssets(png: best?.png, title: title)
     }
 
     private struct PagePrefix {
@@ -79,6 +89,14 @@ enum FaviconFetcher {
     private struct RenderedIcon {
         var sourceArea: Int
         var png: Data
+    }
+
+    /// Decode a capped HTML prefix. A mid-stream cut can split a UTF-8 codepoint; use lossy UTF-8
+    /// so early content (titles / icon links) stays valid instead of falling through to Latin-1 mojibake.
+    private static func decodeHTML(_ data: Data) -> String? {
+        let utf8 = String(decoding: data, as: UTF8.self)
+        if utf8.contains(where: { $0 != "\u{FFFD}" }) { return utf8 }
+        return String(data: data, encoding: .isoLatin1)
     }
 
     private static func fetchPrefix(from url: URL, limit: Int) async -> PagePrefix? {
@@ -140,6 +158,81 @@ enum FaviconFetcher {
             NSLog("Manifest obtain failed: \(error)")
             return nil
         }
+    }
+
+    /// Prefer Open Graph / Twitter title, then `<title>`. Decodes common HTML entities.
+    private static func pageTitle(in html: String) -> String? {
+        if let og = metaContent(in: html, property: "og:title") { return og }
+        if let twitter = metaContent(in: html, name: "twitter:title") { return twitter }
+        return htmlTitle(in: html)
+    }
+
+    private static func metaContent(in html: String, property: String? = nil, name: String? = nil) -> String? {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+
+        let ns = html as NSString
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let tag = ns.substring(with: match.range)
+            let attrs = attributes(in: tag)
+            if let property {
+                guard attrs["property"]?.caseInsensitiveCompare(property) == .orderedSame else { continue }
+            }
+            if let name {
+                guard attrs["name"]?.caseInsensitiveCompare(name) == .orderedSame else { continue }
+            }
+            guard let content = attrs["content"] else { continue }
+            let decoded = decodeHTMLEntities(content)
+                .split(whereSeparator: { $0.isWhitespace })
+                .joined(separator: " ")
+            if !decoded.isEmpty { return decoded }
+        }
+        return nil
+    }
+
+    private static func htmlTitle(in html: String) -> String? {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"<title\b[^>]*>(.*?)</title>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else { return nil }
+        let ns = html as NSString
+        guard let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)),
+              match.numberOfRanges > 1 else { return nil }
+        let raw = ns.substring(with: match.range(at: 1))
+        let decoded = decodeHTMLEntities(raw)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return decoded.isEmpty ? nil : decoded
+    }
+
+    private static func decodeHTMLEntities(_ string: String) -> String {
+        var result = string
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+        // Numeric entities: &#123; / &#x1F4A9;
+        if let regex = try? NSRegularExpression(pattern: #"&#(x?[0-9A-Fa-f]+);"#) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length))
+            for match in matches.reversed() {
+                let body = ns.substring(with: match.range(at: 1))
+                let scalar: Unicode.Scalar?
+                if body.lowercased().hasPrefix("x") {
+                    scalar = UInt32(body.dropFirst(), radix: 16).flatMap(Unicode.Scalar.init)
+                } else {
+                    scalar = UInt32(body).flatMap(Unicode.Scalar.init)
+                }
+                guard let scalar else { continue }
+                result = (result as NSString).replacingCharacters(in: match.range, with: String(scalar))
+            }
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// `rel=manifest` href from the page, if any.

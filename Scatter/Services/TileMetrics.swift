@@ -1,6 +1,10 @@
 import CoreGraphics
 
 enum TileMetrics {
+    /// Settings icon-size slider bounds (points). Favicon storage uses `maxIconSize` at 2× (see `WebLinkFetcher`).
+    static let minIconSize: Double = 36
+    static let maxIconSize: Double = 128
+
     /// Vertical space reserved for the item title (exactly two text lines).
     static func titleHeight(labelSize: Double) -> CGFloat {
         ceil(CGFloat(labelSize) * 2.6)

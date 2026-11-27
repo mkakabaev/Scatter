@@ -58,7 +58,7 @@ struct SettingsView: View {
                 appearanceSlider(
                     title: "Icon size",
                     value: store.state.settings.iconSize,
-                    range: 36...128
+                    range: TileMetrics.minIconSize...TileMetrics.maxIconSize
                 ) { value in
                     store.updateSettings { $0.iconSize = value.rounded() }
                 }
