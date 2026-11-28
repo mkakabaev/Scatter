@@ -13,7 +13,7 @@ struct MainWindowView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color(nsColor: NSColor(hex: store.state.settings.backgroundColorHex) ?? .black)
+            store.state.settings.backgroundColor.color
 
             GeometryReader { geo in
                 let width = sidebarWidth(in: geo.size.width)
@@ -39,7 +39,7 @@ struct MainWindowView: View {
                     .frame(width: CGFloat(SidebarLayout.splitterThickness))
                     .frame(maxHeight: .infinity)
 
-                    FreeformCanvasView()
+                    CanvasView()
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
             }
@@ -88,6 +88,28 @@ struct MainWindowView: View {
         } message: {
             Text(store.openFailure?.message ?? "")
         }
+        .alert(
+            "Couldn’t Save Layout",
+            isPresented: Binding(
+                get: { store.saveFailureMessage != nil },
+                set: { if !$0 { store.clearSaveFailure() } }
+            )
+        ) {
+            Button("OK", role: .cancel) { store.clearSaveFailure() }
+        } message: {
+            Text(store.saveFailureMessage ?? "")
+        }
+        .alert(
+            "Couldn’t Add Items",
+            isPresented: Binding(
+                get: { store.ingestFailureMessage != nil },
+                set: { if !$0 { store.clearIngestFailure() } }
+            )
+        ) {
+            Button("OK", role: .cancel) { store.clearIngestFailure() }
+        } message: {
+            Text(store.ingestFailureMessage ?? "")
+        }
         .alert("New Collection", isPresented: $showNewCollection) {
             TextField("Name", text: $newCollectionName)
             Button("Cancel", role: .cancel) { newCollectionName = "" }
@@ -111,10 +133,16 @@ struct MainWindowView: View {
                 renameCollectionID = nil
             }
         }
+        .onChange(of: showNewCollection) { _, _ in syncCollectionAlertFlag() }
+        .onChange(of: renameCollectionID) { _, _ in syncCollectionAlertFlag() }
         // Accept keyboard focus for type-to-search / arrows; no system focus ring
         // (that blue rect flashes around the content, especially during live resize).
         .focusable()
         .focusEffectDisabled()
+    }
+
+    private func syncCollectionAlertFlag() {
+        store.isPresentingCollectionAlert = showNewCollection || renameCollectionID != nil
     }
 
     private func sidebarWidth(in containerWidth: CGFloat) -> CGFloat {
@@ -124,9 +152,22 @@ struct MainWindowView: View {
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         guard store.isMainWindowVisible else { return event }
+        // Local monitors see app-wide keyDowns — only handle keys when the launcher is key
+        // (Settings / other windows must keep typing, Escape, ⌘V, etc.).
+        guard Self.isLauncherKeyWindow() else { return event }
 
         // The system eyedropper must receive Escape (cancel) and the sample click.
         if store.isSamplingItemBackground {
+            return event
+        }
+
+        // Blocking alerts / Finder-drop Open With choice / item or collection Rename — do not paste, search, or Escape-hide under them.
+        if store.openFailure != nil
+            || store.ingestFailureMessage != nil
+            || store.saveFailureMessage != nil
+            || store.isPresentingItemOpenChoice
+            || store.isPresentingItemRename
+            || store.isPresentingCollectionAlert {
             return event
         }
 
@@ -152,7 +193,7 @@ struct MainWindowView: View {
 
         if store.backgroundPickerItemID != nil {
             if event.keyCode == 53 { // escape — close the palette, keep the window
-                store.backgroundPickerItemID = nil
+                store.handleMainWindowCancel()
                 return nil
             }
             if event.modifierFlags.contains(.command) {
@@ -163,7 +204,7 @@ struct MainWindowView: View {
 
         if store.isSelectingItems {
             if event.keyCode == 53 { // escape — leave select mode, keep the window
-                store.exitItemSelection()
+                store.handleMainWindowCancel()
                 return nil
             }
             // No open / arrows / type-to-search while selecting (Delete is never batch-remove).
@@ -213,7 +254,7 @@ struct MainWindowView: View {
 
         switch event.keyCode {
         case 53: // escape
-            store.hideMainWindow()
+            store.handleMainWindowCancel()
             return nil
         case 36, 76: // return
             if let id = store.selectedItemID, let item = store.findItem(id) {
@@ -245,7 +286,7 @@ struct MainWindowView: View {
 
     private func handleSearchKey(_ event: NSEvent) -> NSEvent? {
         switch event.keyCode {
-        case 53: // escape — dismiss search first
+        case 53: // escape — close overlay only; window stays
             store.clearSearch()
             return nil
         case 36, 76: // return — open selected hit (TextField onSubmit also handles this)
@@ -273,6 +314,11 @@ struct MainWindowView: View {
             // Let TextField receive typing / paste / etc.
             return event
         }
+    }
+
+    /// True when the nonactivating launcher panel is the key window.
+    private static func isLauncherKeyWindow() -> Bool {
+        NSApp.keyWindow is LauncherWindow
     }
 
     /// True when an alert TextField / field editor (or any NSText*) is first responder.

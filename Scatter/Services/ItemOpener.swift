@@ -1,11 +1,6 @@
 import AppKit
 import Darwin
 
-struct DraggedWebLink {
-    var url: URL
-    var title: String?
-}
-
 enum ItemOpener {
     /// Launch only — never modifies, updates, or deletes the target app/file/folder.
     /// Uses the item’s saved Open With app when set; otherwise the system default.
@@ -22,7 +17,7 @@ enum ItemOpener {
         keepWindowOpen: Bool,
         store: AppStore
     ) {
-        guard let url = item.resolvedURL() else {
+        guard let target = ItemURLResolver.resolveDetailed(item) else {
             Task { @MainActor in
                 store.reportOpenFailure(
                     itemName: item.displayName,
@@ -31,6 +26,7 @@ enum ItemOpener {
             }
             return
         }
+        let url = target.url
 
         // Missing targets / Open With apps: do not call NSWorkspace — Launch Services often returns
         // a misleading error (blames the wrong side) and may also surface a Finder alert.
@@ -38,28 +34,27 @@ enum ItemOpener {
             Task { @MainActor in
                 store.reportOpenFailure(
                     itemName: item.displayName,
-                    message: missingTargetMessage(for: item.kind)
+                    message: item.kind.missingTargetMessage
                 )
             }
             return
         }
 
-        let wantsOpenWith = applicationURL != nil
-            || item.openWithBundleIdentifier != nil
-            || item.openWithBookmarkData != nil
-        let resolvedOpenWith: URL?
-        if let applicationURL {
-            resolvedOpenWith = applicationExists(at: applicationURL) ? applicationURL : nil
-        } else if item.kind == .app {
+        // Apps never use Open With — ignore any explicit helper URL.
+        let wantsOpenWith = item.supportsOpenWith && (applicationURL != nil || item.hasOpenWith)
+        let resolvedOpenWith: OpenWithResolver.Resolved?
+        if !item.supportsOpenWith {
             resolvedOpenWith = nil
+        } else if let applicationURL {
+            resolvedOpenWith = OpenWithResolver.resolve(applicationAt: applicationURL)
         } else {
-            resolvedOpenWith = resolveOpenWithApp(for: item)
+            resolvedOpenWith = OpenWithResolver.resolve(for: item)
         }
-        if wantsOpenWith, item.kind != .app, resolvedOpenWith == nil {
+        if wantsOpenWith, resolvedOpenWith == nil {
             Task { @MainActor in
                 store.reportOpenFailure(
                     itemName: item.displayName,
-                    message: missingOpenWithMessage(for: item, applicationURL: applicationURL)
+                    message: missingOpenWithMessage(applicationURL: applicationURL)
                 )
             }
             return
@@ -88,9 +83,14 @@ enum ItemOpener {
         // Stay visible/active until LS accepts the handoff — hiding an LSUIElement app first can
         // abort or bounce-then-kill some target apps.
         Task { @MainActor in
+            store.refreshStaleBookmarks(
+                for: item.id,
+                itemBookmark: target.refreshedBookmarkData,
+                openWithBookmark: resolvedOpenWith?.refreshedBookmarkData
+            )
             store.beginExternalLaunch()
 
-            if let openWithURL = resolvedOpenWith {
+            if let openWithURL = resolvedOpenWith?.url {
                 NSWorkspace.shared.open([url], withApplicationAt: openWithURL, configuration: configuration) { _, error in
                     finish(error)
                 }
@@ -191,7 +191,14 @@ enum ItemOpener {
         }
     }
 
+    /// How long to wait for a cold-start app to appear in `NSRunningApplication`.
+    private static let appLaunchAppearBudget: TimeInterval = 3.0
+    /// After first sighting, re-check so bounce-then-die (Gatekeeper) still fails.
+    private static let appLaunchStabilityDelay: TimeInterval = 0.75
+    private static let appLaunchPollInterval: TimeInterval = 0.2
+
     /// Gatekeeper / crash-on-launch often completes with `error == nil` before the process dies.
+    /// Poll until the app appears (slow cold starts) then confirm it stays up briefly.
     private static func confirmAppStillRunning(
         bundleURL: URL,
         launched: NSRunningApplication?,
@@ -199,27 +206,56 @@ enum ItemOpener {
         hideOnSuccess: Bool,
         store: AppStore
     ) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-            let stillRunning: Bool
-            if let launched, !launched.isTerminated {
-                stillRunning = true
-            } else {
-                stillRunning = isApplicationRunning(at: bundleURL)
-            }
+        let started = Date()
+        func isRunning() -> Bool {
+            if let launched, !launched.isTerminated { return true }
+            // Exact bundle path — not bundle ID — so another already-running copy does not
+            // mask a quarantined launch that died.
+            return isApplicationRunning(at: bundleURL)
+        }
 
+        func finishSuccess() {
             Task { @MainActor in
                 store.endExternalLaunch()
-                if stillRunning {
-                    if hideOnSuccess { store.hideMainWindow() }
+                if hideOnSuccess { store.hideMainWindow() }
+            }
+        }
+
+        func finishFailure() {
+            reportAppLaunchFailure(
+                bundleURL: bundleURL,
+                itemName: itemName,
+                fallbackMessage: "The application quit immediately after launching.",
+                store: store
+            )
+        }
+
+        func scheduleStabilityCheck() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + appLaunchStabilityDelay) {
+                if isRunning() {
+                    finishSuccess()
                 } else {
-                    reportAppLaunchFailure(
-                        bundleURL: bundleURL,
-                        itemName: itemName,
-                        fallbackMessage: "The application quit immediately after launching.",
-                        store: store
-                    )
+                    finishFailure()
                 }
             }
+        }
+
+        func pollForAppearance() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + appLaunchPollInterval) {
+                if isRunning() {
+                    scheduleStabilityCheck()
+                } else if Date().timeIntervalSince(started) >= appLaunchAppearBudget {
+                    finishFailure()
+                } else {
+                    pollForAppearance()
+                }
+            }
+        }
+
+        if isRunning() {
+            scheduleStabilityCheck()
+        } else {
+            pollForAppearance()
         }
     }
 
@@ -251,6 +287,7 @@ enum ItemOpener {
             """
         }
         Task { @MainActor in
+            store.endExternalLaunch()
             store.reportOpenFailure(itemName: itemName, message: message, recoveryCommand: command)
         }
     }
@@ -303,12 +340,10 @@ enum ItemOpener {
 
     private static func isApplicationRunning(at bundleURL: URL) -> Bool {
         let target = bundleURL.resolvingSymlinksInPath().standardizedFileURL
-        let bundleID = Bundle(url: target)?.bundleIdentifier
         return NSWorkspace.shared.runningApplications.contains { app in
-            if let bundleID, app.bundleIdentifier == bundleID {
-                return true
+            guard let running = app.bundleURL?.resolvingSymlinksInPath().standardizedFileURL else {
+                return false
             }
-            guard let running = app.bundleURL?.resolvingSymlinksInPath().standardizedFileURL else { return false }
             return running == target
         }
     }
@@ -316,38 +351,17 @@ enum ItemOpener {
     /// `TZ` for a new app instance. Empty when the preference is system / unset / unknown.
     /// `__XPC_TZ` is intentionally omitted: Core Foundation reads `TZ` (then `TZFILE`), and this
     /// OS has no `__XPC_TZ` consumer in the dyld shared cache.
-    static func launchEnvironment(timeZoneIdentifier: String?) -> [String: String] {
+    private static func launchEnvironment(timeZoneIdentifier: String?) -> [String: String] {
         guard let timeZoneIdentifier, TimeZone(identifier: timeZoneIdentifier) != nil else { return [:] }
         return ["TZ": timeZoneIdentifier]
     }
 
-    private static func missingTargetMessage(for kind: LauncherItem.Kind) -> String {
-        switch kind {
-        case .folder:
-            return "This folder no longer exists."
-        case .file:
-            return "This file no longer exists."
-        case .app:
-            return "This application no longer exists."
-        case .url:
-            return "The item’s location could not be resolved."
-        }
-    }
-
-    private static func missingOpenWithMessage(for item: LauncherItem, applicationURL: URL?) -> String {
-        let name = applicationURL.map { OpenWithPanel.displayName(forApplicationAt: $0) }
-            ?? OpenWithPanel.displayName(
-                bundleID: item.openWithBundleIdentifier,
-                bookmark: item.openWithBookmarkData
-            )
-        if let name {
-            return "“\(name)” could not be found."
+    private static func missingOpenWithMessage(applicationURL: URL?) -> String {
+        // One-shot path may be missing on disk but the path still yields a label.
+        if let applicationURL {
+            return "“\(FileDisplayName.of(applicationURL))” could not be found."
         }
         return "The Open With application could not be found."
-    }
-
-    private static func applicationExists(at url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
     }
 
     private static func openConfiguration(item: LauncherItem, settings: AppState.Settings) -> NSWorkspace.OpenConfiguration {
@@ -356,11 +370,15 @@ enum ItemOpener {
         // Allow Gatekeeper / consent UI when needed (Finder shows these; silent openApplication often will not).
         configuration.promptsUserIfNeeded = true
         guard item.applyTimeZone else { return configuration }
-        let environment = launchEnvironment(timeZoneIdentifier: settings.timeZoneIdentifier)
-        if !environment.isEmpty {
-            // Setting `environment` replaces inheritance — only attach when TZ injection is requested.
-            configuration.environment = environment
+        let tz = launchEnvironment(timeZoneIdentifier: settings.timeZoneIdentifier)
+        guard !tz.isEmpty else { return configuration }
+        // `OpenConfiguration.environment` replaces inheritance when non-nil — merge onto the
+        // current process environment so PATH/HOME/etc. survive, then overlay TZ.
+        var environment = ProcessInfo.processInfo.environment
+        for (key, value) in tz {
+            environment[key] = value
         }
+        configuration.environment = environment
         return configuration
     }
 
@@ -368,7 +386,7 @@ enum ItemOpener {
     /// Hides the launcher after a successful reveal when `keepWindowOpen` is false — same as Open.
     static func reveal(_ item: LauncherItem, keepWindowOpen: Bool, store: AppStore) {
         guard item.kind != .url else { return }
-        guard let url = item.resolvedURL() else {
+        guard let target = ItemURLResolver.resolveDetailed(item) else {
             Task { @MainActor in
                 store.reportOpenFailure(
                     itemName: item.displayName,
@@ -377,214 +395,27 @@ enum ItemOpener {
             }
             return
         }
+        let url = target.url
         if !FileManager.default.fileExists(atPath: url.path) {
             Task { @MainActor in
                 store.reportOpenFailure(
                     itemName: item.displayName,
-                    message: missingTargetMessage(for: item.kind)
+                    message: item.kind.missingTargetMessage
                 )
             }
             return
         }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-        if !keepWindowOpen {
-            Task { @MainActor in
+        Task { @MainActor in
+            store.refreshStaleBookmarks(for: item.id, itemBookmark: target.refreshedBookmarkData, openWithBookmark: nil)
+            // Nest the launch gate so Finder activation does not re-raise the launcher mid-handoff.
+            store.beginExternalLaunch()
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            if !keepWindowOpen {
                 store.hideMainWindow()
             }
-        }
-    }
-
-    static func primaryActionTitle(for item: LauncherItem) -> String {
-        if let name = OpenWithPanel.displayName(
-            bundleID: item.openWithBundleIdentifier,
-            bookmark: item.openWithBookmarkData
-        ) {
-            return "Open in \(name)"
-        }
-        return "Open"
-    }
-
-    static func resolveOpenWithApp(for item: LauncherItem) -> URL? {
-        if let bookmark = item.openWithBookmarkData {
-            var stale = false
-            if let url = try? URL(
-                resolvingBookmarkData: bookmark,
-                options: [.withoutUI],
-                relativeTo: nil,
-                bookmarkDataIsStale: &stale
-            ), applicationExists(at: url) {
-                return url
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                store.endExternalLaunch()
             }
         }
-        if let bundleID = item.openWithBundleIdentifier,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
-           applicationExists(at: url) {
-            return url
-        }
-        return nil
-    }
-
-    /// Read-only bookmark (no security scope). Sandbox is off; we only need a stable path reference for launching.
-    static func bookmark(forApplicationAt url: URL) -> Data? {
-        try? url.bookmarkData(
-            options: [.minimalBookmark],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
-    }
-
-    /// http(s) link on the drag pasteboard. Safari writes `public.url` here; the item provider is often only a `.webloc` file promise.
-    static func draggedWebLink() -> DraggedWebLink? {
-        webLink(on: NSPasteboard(name: .drag))
-    }
-
-    /// `public.url-name` from the drag pasteboard (page title), when the browser provided one.
-    static func draggedWebTitle() -> String? {
-        NSPasteboard(name: .drag).string(forType: urlNameType)
-    }
-
-    /// http(s) link on the general clipboard (⌘V), including plain-text URL strings.
-    static func clipboardWebLink() -> DraggedWebLink? {
-        webLink(on: .general)
-    }
-
-    /// Prefer on-disk file URLs; otherwise VS Code/Cursor `code/file-list`; otherwise http(s); otherwise any URL.
-    /// Shared by Finder drop and ⌘V.
-    static func urls(from pasteboard: NSPasteboard) -> [URL] {
-        if let files = pasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL], !files.isEmpty {
-            return files.filter { FileManager.default.fileExists(atPath: $0.path) }
-        }
-
-        // VS Code / Cursor Explorer copy: private type with newline-separated URI strings.
-        // Readable at pasteboard level even when macOS stores it under a dyn. UTI on the item.
-        if let codeList = urlsFromCodeFileList(on: pasteboard), !codeList.isEmpty {
-            return codeList
-        }
-
-        if let link = webLink(on: pasteboard) {
-            return [link.url]
-        }
-
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
-            return urls
-        }
-
-        // Last resort: raw public.file-url / public.url strings on the pasteboard.
-        if let paths = pasteboard.propertyList(forType: .fileURL) as? [String] {
-            let urls = paths.compactMap { URL(string: $0) ?? URL(fileURLWithPath: $0) }
-            if !urls.isEmpty { return urls }
-        }
-        return []
-    }
-
-    /// VS Code / Cursor `code/file-list`: UTF-8 newline-separated URIs (typically `file://…`).
-    private static func urlsFromCodeFileList(on pasteboard: NSPasteboard) -> [URL]? {
-        guard let data = pasteboard.data(forType: codeFileListType),
-              let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty else {
-            return nil
-        }
-        let urls = text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .compactMap { URL(string: String($0)) }
-        return urls.isEmpty ? nil : urls
-    }
-
-    static func webLink(on pasteboard: NSPasteboard) -> DraggedWebLink? {
-        guard let url = webURL(on: pasteboard) else { return nil }
-        return DraggedWebLink(url: url, title: pasteboard.string(forType: urlNameType))
-    }
-
-    private static let urlNameType = NSPasteboard.PasteboardType("public.url-name")
-    /// VS Code / Cursor Explorer file copy (Electron `clipboard.writeBuffer("code/file-list", …)`).
-    private static let codeFileListType = NSPasteboard.PasteboardType("code/file-list")
-
-    private static func webURL(on pasteboard: NSPasteboard) -> URL? {
-        if let string = pasteboard.string(forType: .URL), let url = httpURL(from: string) {
-            return url
-        }
-        if let data = pasteboard.data(forType: .URL) {
-            if let string = String(data: data, encoding: .utf8), let url = httpURL(from: string) {
-                return url
-            }
-            if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? String,
-               let url = httpURL(from: plist) {
-                return url
-            }
-            if let url = URL(dataRepresentation: data, relativeTo: nil), isHTTP(url) {
-                return url
-            }
-        }
-        // Browser address-bar / plain Copy often puts only UTF-8 text on the clipboard.
-        if let string = pasteboard.string(forType: .string), let url = httpURL(from: string) {
-            return url
-        }
-        return nil
-    }
-
-    private static func httpURL(from string: String) -> URL? {
-        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), isHTTP(url) else { return nil }
-        return url
-    }
-
-    private static func isHTTP(_ url: URL) -> Bool {
-        let scheme = url.scheme?.lowercased()
-        return scheme == "http" || scheme == "https"
-    }
-
-    static func webDisplayName(title: String?, url: URL) -> String {
-        if let title {
-            let collapsed = title.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-            if !collapsed.isEmpty, collapsed != url.absoluteString {
-                return collapsed
-            }
-        }
-        return url.host ?? url.absoluteString
-    }
-
-    static func makeItem(from url: URL, at position: CGPoint, title: String? = nil) -> LauncherItem? {
-        if isHTTP(url) {
-            return LauncherItem(
-                kind: .url,
-                urlString: url.absoluteString,
-                displayName: webDisplayName(title: title, url: url),
-                position: .init(position)
-            )
-        }
-
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
-
-        let kind: LauncherItem.Kind
-        if url.pathExtension.lowercased() == "app" || (isDir.boolValue && url.path.hasSuffix(".app")) {
-            kind = .app
-        } else if isDir.boolValue {
-            kind = .folder
-        } else {
-            kind = .file
-        }
-
-        // Minimal bookmark only — never `.withSecurityScope` (that can trigger App Management TCC).
-        let bookmark = try? url.bookmarkData(
-            options: [.minimalBookmark],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
-
-        // Strip extension for apps and files (folders without an extension are unchanged).
-        let name = url.deletingPathExtension().lastPathComponent
-
-        return LauncherItem(
-            kind: kind,
-            bookmarkData: bookmark,
-            urlString: url.absoluteString,
-            displayName: name,
-            position: .init(position)
-        )
     }
 }

@@ -1,9 +1,8 @@
 import AppKit
 
 enum CursorLocator {
-    
-    static private var defaultAppUrl =  URL(fileURLWithPath: "/Applications/Cursor.app")
-    
+    private static let defaultAppURL = URL(fileURLWithPath: "/Applications/Cursor.app")
+
     static var bundleIdentifier: String? {
         let candidates = [
             "com.todesktop.230313mzl4w4u92",
@@ -14,18 +13,17 @@ enum CursorLocator {
                 return bid
             }
         }
-        let app = defaultAppUrl
-        if FileManager.default.fileExists(atPath: app.path) {
-            return Bundle(url: app)?.bundleIdentifier ?? candidates[0]
+        if FileManager.default.fileExists(atPath: defaultAppURL.path) {
+            return Bundle(url: defaultAppURL)?.bundleIdentifier ?? candidates[0]
         }
         return nil
     }
 
     static var applicationURL: URL? {
-        if let bid = bundleIdentifier {
-            return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid)
+        if let bid = bundleIdentifier,
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
+            return url
         }
-        let app = defaultAppUrl
-        return FileManager.default.fileExists(atPath: app.path) ? app : nil
+        return FileManager.default.fileExists(atPath: defaultAppURL.path) ? defaultAppURL : nil
     }
 }

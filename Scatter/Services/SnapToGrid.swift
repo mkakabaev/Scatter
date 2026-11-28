@@ -5,14 +5,14 @@ enum SnapToGrid {
     static let origin = CGPoint(x: 24, y: 24)
 
     /// Fully empty grid rows (no items) use this fraction of a normal occupied row pitch.
-    static let emptyRowHeightFactor: CGFloat = 0.5
+    private static let emptyRowHeightFactor: CGFloat = 0.5
 
     struct Cell: Hashable {
         var column: Int
         var row: Int
     }
 
-    static func cellSize(settings: AppState.Settings) -> CGSize {
+    private static func cellSize(settings: AppState.Settings) -> CGSize {
         let tileW = TileMetrics.itemWidth(iconSize: settings.iconSize)
         let tileH = TileMetrics.itemHeight(iconSize: settings.iconSize, labelSize: settings.labelSize)
         return CGSize(
@@ -21,11 +21,16 @@ enum SnapToGrid {
         )
     }
 
-    static func fullRowHeight(settings: AppState.Settings) -> CGFloat {
+    /// Uniform full-row pitch for migrating legacy layouts that only stored `position`.
+    static func legacyCellSize(settings: AppState.Settings) -> CGSize {
+        cellSize(settings: settings)
+    }
+
+    private static func fullRowHeight(settings: AppState.Settings) -> CGFloat {
         cellSize(settings: settings).height
     }
 
-    static func emptyRowHeight(settings: AppState.Settings) -> CGFloat {
+    private static func emptyRowHeight(settings: AppState.Settings) -> CGFloat {
         fullRowHeight(settings: settings) * emptyRowHeightFactor
     }
 
@@ -47,7 +52,7 @@ enum SnapToGrid {
 
     /// Renumber `gridRow` so consecutive empty indices become a single empty row.
     /// Leading empties pack away (first occupied → 0). At most one empty between occupied rows.
-    static func collapseConsecutiveEmptyRows(items: inout [LauncherItem]) {
+    private static func collapseConsecutiveEmptyRows(items: inout [LauncherItem]) {
         let occupied = Set(items.map(\.gridRow)).sorted()
         guard !occupied.isEmpty else { return }
 
@@ -89,7 +94,7 @@ enum SnapToGrid {
         }
     }
 
-    static func applyAssignments(
+    private static func applyAssignments(
         _ assignments: [UUID: Cell],
         to items: inout [LauncherItem],
         settings: AppState.Settings
@@ -207,25 +212,12 @@ enum SnapToGrid {
             }
             y += h
         }
-        return Cell(column: max(0, column), row: bestRow)
+        return clamp(Cell(column: max(0, column), row: bestRow), to: bounds)
     }
 
-    /// Resolve an item’s grid cell: prefer stored coords; bootstrap from absolute position if unset.
-    static func cell(of item: LauncherItem, settings: AppState.Settings) -> Cell {
-        // Treat (0,0) with a non-origin position as “legacy / needs bootstrap” only when
-        // position clearly isn’t at the (0,0) slot. Otherwise trust stored grid.
-        if item.gridColumn != 0 || item.gridRow != 0 {
-            return Cell(column: item.gridColumn, row: item.gridRow)
-        }
-        let inferred = cell(for: item.position.cgPoint, settings: settings)
-        if inferred.column == 0 && inferred.row == 0 {
-            return inferred
-        }
-        // Legacy item still at default grid 0,0 but drawn elsewhere — trust position once.
-        if hypot(item.position.x - origin.x, item.position.y - origin.y) > 8 {
-            return inferred
-        }
-        return Cell(column: item.gridColumn, row: item.gridRow)
+    /// Resolve an item’s grid cell from stored coordinates.
+    static func cell(of item: LauncherItem) -> Cell {
+        Cell(column: item.gridColumn, row: item.gridRow)
     }
 
     // MARK: - Interactive layout
@@ -306,10 +298,10 @@ enum SnapToGrid {
         guard let dragging = items.first(where: { $0.id == itemID }) else { return nil }
 
         let bounds = gridBounds(canvasSize: canvasSize, settings: settings)
-        let originCell = cell(of: dragging, settings: settings)
+        let originCell = cell(of: dragging)
 
         // Geometry while dragging: origin row still occupied (matches on-screen layout).
-        var occupiedRowsForGeometry = Set(items.map { cell(of: $0, settings: settings).row })
+        var occupiedRowsForGeometry = Set(items.map { cell(of: $0).row })
         occupiedRowsForGeometry.insert(originCell.row)
 
         let target = clamp(
@@ -324,7 +316,7 @@ enum SnapToGrid {
 
         var assignments: [UUID: Cell] = [:]
         for item in items where item.id != itemID {
-            assignments[item.id] = cell(of: item, settings: settings)
+            assignments[item.id] = cell(of: item)
         }
         resolveDuplicateAssignments(bounds: bounds, assignments: &assignments)
         if assignments.values.contains(target) {
@@ -340,17 +332,19 @@ enum SnapToGrid {
         )
     }
 
-    static func rowHeight(row: Int, occupiedRows: Set<Int>, settings: AppState.Settings) -> CGFloat {
+    private static func rowHeight(row: Int, occupiedRows: Set<Int>, settings: AppState.Settings) -> CGFloat {
         occupiedRows.contains(row)
             ? fullRowHeight(settings: settings)
             : emptyRowHeight(settings: settings)
     }
 
     private static func resolveDuplicateAssignments(bounds: Cell, assignments: inout [UUID: Cell]) {
+        // Stable order so which duplicate keeps the cell does not depend on Dictionary hash order.
+        let ordered = assignments.sorted { $0.key.uuidString < $1.key.uuidString }
         var seen: [Cell: UUID] = [:]
         var duplicates: [(UUID, Cell)] = []
-        for (id, cell) in assignments {
-            if let existing = seen[cell], existing != id {
+        for (id, cell) in ordered {
+            if seen[cell] != nil {
                 duplicates.append((id, cell))
             } else {
                 seen[cell] = id
@@ -445,7 +439,9 @@ enum SnapToGrid {
         }
 
         if !remaining.isEmpty {
-            wrapInsert(remaining, ontoRow: row + 1, bounds: bounds, assignments: &assignments)
+            // Allow one extra row past the canvas bounds so overflow can land; column width stays clamped.
+            let nextBounds = Cell(column: bounds.column, row: max(bounds.row, row + 1))
+            wrapInsert(remaining, ontoRow: row + 1, bounds: nextBounds, assignments: &assignments)
         }
     }
 
@@ -494,15 +490,6 @@ enum SnapToGrid {
         )
     }
 
-    /// Uniform grid cell from a canvas point (legacy bootstrap only).
-    static func cell(for point: CGPoint, settings: AppState.Settings) -> Cell {
-        let size = cellSize(settings: settings)
-        guard size.width > 0, size.height > 0 else { return Cell(column: 0, row: 0) }
-        let column = Int(round((point.x - origin.x) / size.width))
-        let row = Int(round((point.y - origin.y) / size.height))
-        return Cell(column: max(0, column), row: max(0, row))
-    }
-
     /// Drop targeting: column from uniform X; row = nearest strip by **vertical center**.
     /// Probe uses the item tile’s vertical center (`point` is top-left).
     static func cell(
@@ -530,7 +517,26 @@ enum SnapToGrid {
             }
             y += h
         }
-        return Cell(column: max(0, column), row: bestRow)
+        return clamp(Cell(column: max(0, column), row: bestRow), to: bounds)
+    }
+
+    /// First free cell + top-left point in row-major order (for ⌘V / auto-place).
+    static func nextFreePlacement(
+        items: [LauncherItem],
+        settings: AppState.Settings,
+        canvasSize: CGSize
+    ) -> (point: CGPoint, cell: Cell) {
+        let bounds = gridBounds(canvasSize: canvasSize, settings: settings)
+        let occupied = Set(items.map { cell(of: $0) })
+        let free = nearestFreeCell(from: Cell(column: 0, row: 0), occupied: occupied, bounds: bounds)
+        let occupiedRows = Set(items.map(\.gridRow)).union([free.row])
+        let point = positionForGrid(
+            row: free.row,
+            column: free.column,
+            occupiedRows: occupiedRows,
+            settings: settings
+        )
+        return (point, free)
     }
 
     /// Top-left of the first free cell in row-major order (for ⌘V / auto-place).
@@ -539,16 +545,7 @@ enum SnapToGrid {
         settings: AppState.Settings,
         canvasSize: CGSize
     ) -> CGPoint {
-        let bounds = gridBounds(canvasSize: canvasSize, settings: settings)
-        let occupied = Set(items.map { cell(of: $0, settings: settings) })
-        let free = nearestFreeCell(from: Cell(column: 0, row: 0), occupied: occupied, bounds: bounds)
-        let occupiedRows = Set(items.map(\.gridRow)).union([free.row])
-        return positionForGrid(
-            row: free.row,
-            column: free.column,
-            occupiedRows: occupiedRows,
-            settings: settings
-        )
+        nextFreePlacement(items: items, settings: settings, canvasSize: canvasSize).point
     }
 
     static func nearestFreeCell(from preferred: Cell, occupied: Set<Cell>, bounds: Cell? = nil) -> Cell {
@@ -567,7 +564,7 @@ enum SnapToGrid {
                         continue
                     }
                     if row < 0 || column < 0 { continue }
-                    if let bounds, column > bounds.column || row > bounds.row { continue }
+                    if column > limit.column || row > limit.row { continue }
                     let candidate = Cell(column: column, row: row)
                     if !occupied.contains(candidate) {
                         return candidate
@@ -575,7 +572,19 @@ enum SnapToGrid {
                 }
             }
         }
-        return Cell(column: start.column, row: start.row + occupied.count + 1)
+
+        // Packed within limit: walk row-major with column clamp, allowing rows past `limit.row`.
+        var row = 0
+        while row < limit.row + occupied.count + 2 {
+            for column in 0...limit.column {
+                let candidate = Cell(column: column, row: row)
+                if !occupied.contains(candidate) {
+                    return candidate
+                }
+            }
+            row += 1
+        }
+        return Cell(column: min(start.column, limit.column), row: limit.row)
     }
 
     private static func firstFreeCell(

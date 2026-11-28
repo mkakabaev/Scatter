@@ -16,6 +16,12 @@ struct WindowBackgroundDragView: NSViewRepresentable {
         var action: (CGPoint) -> Void = { _ in }
         /// When non-nil, this entry is a submenu titled `title`.
         var children: [MenuItem]? = nil
+        /// App icon (or other) shown on the row via `NSMenuItem.image`.
+        var image: NSImage? = nil
+        /// When true, title uses the bold menu font (`attributedTitle`).
+        var isBold: Bool = false
+        /// When true, row shows a system checkbox (`NSMenuItem.state = .on`).
+        var isOn: Bool = false
 
         static func separator() -> MenuItem {
             MenuItem(title: "", isSeparator: true)
@@ -27,6 +33,9 @@ struct WindowBackgroundDragView: NSViewRepresentable {
 
         init(
             title: String,
+            image: NSImage? = nil,
+            isBold: Bool = false,
+            isOn: Bool = false,
             isEnabled: ((CGPoint) -> Bool)? = nil,
             action: @escaping (CGPoint) -> Void
         ) {
@@ -35,6 +44,9 @@ struct WindowBackgroundDragView: NSViewRepresentable {
             self.isEnabled = isEnabled
             self.action = action
             self.children = nil
+            self.image = image
+            self.isBold = isBold
+            self.isOn = isOn
         }
 
         private init(title: String, isSeparator: Bool) {
@@ -43,6 +55,9 @@ struct WindowBackgroundDragView: NSViewRepresentable {
             self.isEnabled = nil
             self.action = { _ in }
             self.children = nil
+            self.image = nil
+            self.isBold = false
+            self.isOn = false
         }
 
         private init(title: String, children: [MenuItem]) {
@@ -51,6 +66,9 @@ struct WindowBackgroundDragView: NSViewRepresentable {
             self.isEnabled = nil
             self.action = { _ in }
             self.children = children
+            self.image = nil
+            self.isBold = false
+            self.isOn = false
         }
     }
 
@@ -64,13 +82,16 @@ struct WindowBackgroundDragView: NSViewRepresentable {
     var contextMenuItems: [MenuItem] = []
     /// Called when the empty-area context menu is about to appear.
     var onContextMenuOpen: (() -> Void)? = nil
-    /// Dropped file/http URLs and the drop point in flipped view coordinates.
-    var onURLsDropped: (([URL], CGPoint) -> Void)? = nil
+    /// Pasteboard ingest result and drop point in flipped view coordinates.
+    var onURLsDropped: ((PasteboardContents, CGPoint) -> Void)? = nil
     /// Canvas item frames in this view’s flipped coordinates (for context-menu highlight).
     var itemFrames: [ItemFrame] = []
     /// Right-click on an item frame → transient highlight (canvas only).
     var onItemContextMenuHighlight: ((UUID) -> Void)? = nil
     var onItemContextMenuHighlightClear: (() -> Void)? = nil
+    /// When set, right-click on an item pops this AppKit menu (tiles sit above this view, so the
+    /// local monitor consumes the event — SwiftUI `.contextMenu` cannot show `NSMenuItem.image`).
+    var itemContextMenuItems: ((UUID) -> [MenuItem])? = nil
 
     func makeNSView(context: Context) -> WindowBackgroundDragNSView {
         let view = WindowBackgroundDragNSView()
@@ -87,37 +108,60 @@ struct WindowBackgroundDragView: NSViewRepresentable {
         view.contextMenuItems = contextMenuItems
         view.onContextMenuOpen = onContextMenuOpen
         view.onURLsDropped = onURLsDropped
+        // Canvas is the only surface that ingests Finder/URL drops; sidebar chrome does not.
+        view.isCanvasDropTarget = onURLsDropped != nil
         view.itemFrames = itemFrames
         view.onItemContextMenuHighlight = onItemContextMenuHighlight
         view.onItemContextMenuHighlightClear = onItemContextMenuHighlightClear
+        view.itemContextMenuItems = itemContextMenuItems
         view.updateHighlightMonitoring()
     }
 }
 
 final class WindowBackgroundDragNSView: NSView {
+    /// Stable lookup for ⌘V placement — avoids ambiguous walks when multiple drag views exist.
+    static let canvasDropIdentifier = NSUserInterfaceItemIdentifier("scatter.canvasDrop")
+
     var onClick: (() -> Void)?
     var contextMenuItems: [WindowBackgroundDragView.MenuItem] = []
     var onContextMenuOpen: (() -> Void)?
-    var onURLsDropped: (([URL], CGPoint) -> Void)?
+    var onURLsDropped: ((PasteboardContents, CGPoint) -> Void)?
+    /// True when this view is the canvas drop surface (set from `onURLsDropped != nil`).
+    var isCanvasDropTarget = false {
+        didSet {
+            identifier = isCanvasDropTarget ? Self.canvasDropIdentifier : nil
+        }
+    }
     var itemFrames: [WindowBackgroundDragView.ItemFrame] = []
     var onItemContextMenuHighlight: ((UUID) -> Void)?
     var onItemContextMenuHighlightClear: (() -> Void)?
+    var itemContextMenuItems: ((UUID) -> [WindowBackgroundDragView.MenuItem])?
 
     private var lastMenuPoint: CGPoint = .zero
     /// Retains leaf-item targets for the open context menu.
     private var menuHandlers: [ContextMenuHandler] = []
 
     private var rightMouseMonitor: Any?
-    private var menuBeginObserver: NSObjectProtocol?
-    private var menuEndObserver: NSObjectProtocol?
-    /// Item highlight is live; clear only after a matching `didBeginTracking` → `didEndTracking`.
-    private var itemHighlightMenuTracking = false
-    private var itemHighlightPendingMenu = false
 
-    /// Match item-drag threshold in `FreeformCanvasView`.
+    /// Match item-drag threshold in `CanvasView`.
     private let dragThreshold: CGFloat = 4
+    /// Cache `PasteboardIngest.read` across `draggingUpdated` for the same pasteboard generation.
+    private var acceptCacheChangeCount: Int?
+    private var acceptCacheResult = false
 
     override var isFlipped: Bool { true }
+
+    /// Prefer the tagged canvas drop view over a generic `onURLsDropped` walk.
+    static func canvasDropTarget(in root: NSView?) -> WindowBackgroundDragNSView? {
+        guard let root else { return nil }
+        if let drag = root as? WindowBackgroundDragNSView, drag.isCanvasDropTarget {
+            return drag
+        }
+        for child in root.subviews {
+            if let found = canvasDropTarget(in: child) { return found }
+        }
+        return nil
+    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -151,23 +195,36 @@ final class WindowBackgroundDragNSView: NSView {
     private func installHighlightMonitoring() {
         guard rightMouseMonitor == nil else { return }
         rightMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
-            self?.handleRightMouseDownForItemHighlight(event)
-            return event
+            guard let self else { return event }
+            // Tiles sit above this NSView, so `menu(for:)` is not asked for item hits. Consume the
+            // event and pop an AppKit menu so browser rows can use `NSMenuItem.image` / bold titles.
+            guard let itemID = self.itemIDAtEvent(event),
+                  let builder = self.itemContextMenuItems else {
+                return event
+            }
+            let items = builder(itemID)
+            guard !items.isEmpty else { return event }
+
+            self.onItemContextMenuHighlight?(itemID)
+            let point = self.convert(event.locationInWindow, from: nil)
+            self.lastMenuPoint = point
+            self.menuHandlers.removeAll(keepingCapacity: true)
+            let menu = self.buildMenu(from: items, point: point)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // `popUpContextMenu` runs until dismiss — clear highlight for this menu only.
+                NSMenu.popUpContextMenu(menu, with: event, for: self)
+                self.onItemContextMenuHighlightClear?()
+            }
+            return nil
         }
-        menuBeginObserver = NotificationCenter.default.addObserver(
-            forName: NSMenu.didBeginTrackingNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleMenuDidBeginTracking()
-        }
-        menuEndObserver = NotificationCenter.default.addObserver(
-            forName: NSMenu.didEndTrackingNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleMenuDidEndTracking()
-        }
+    }
+
+    private func itemIDAtEvent(_ event: NSEvent) -> UUID? {
+        guard let window, event.window === window else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point) else { return nil }
+        return itemFrames.last(where: { $0.frame.contains(point) })?.id
     }
 
     private func tearDownHighlightMonitoring() {
@@ -175,50 +232,9 @@ final class WindowBackgroundDragNSView: NSView {
             NSEvent.removeMonitor(rightMouseMonitor)
         }
         rightMouseMonitor = nil
-        if let menuBeginObserver {
-            NotificationCenter.default.removeObserver(menuBeginObserver)
-        }
-        menuBeginObserver = nil
-        if let menuEndObserver {
-            NotificationCenter.default.removeObserver(menuEndObserver)
-        }
-        menuEndObserver = nil
-        itemHighlightMenuTracking = false
-        itemHighlightPendingMenu = false
-    }
-
-    private func handleRightMouseDownForItemHighlight(_ event: NSEvent) {
-        guard onItemContextMenuHighlight != nil else { return }
-        guard let window, event.window === window else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        guard bounds.contains(point) else { return }
-
-        var hit: UUID?
-        for item in itemFrames where item.frame.contains(point) {
-            hit = item.id
-        }
-        guard let hit else { return }
-
-        itemHighlightPendingMenu = true
-        itemHighlightMenuTracking = false
-        onItemContextMenuHighlight?(hit)
-    }
-
-    private func handleMenuDidBeginTracking() {
-        guard itemHighlightPendingMenu else { return }
-        itemHighlightPendingMenu = false
-        itemHighlightMenuTracking = true
-    }
-
-    private func handleMenuDidEndTracking() {
-        guard itemHighlightMenuTracking else { return }
-        itemHighlightMenuTracking = false
-        onItemContextMenuHighlightClear?()
     }
 
     func clearItemHighlightSession() {
-        itemHighlightPendingMenu = false
-        itemHighlightMenuTracking = false
         onItemContextMenuHighlightClear?()
     }
 
@@ -227,8 +243,7 @@ final class WindowBackgroundDragNSView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard !contextMenuItems.isEmpty else { return nil }
         lastMenuPoint = convert(event.locationInWindow, from: nil)
-        // Item tiles sit above this view in SwiftUI, but AppKit may still ask us for a menu.
-        // Defer to the item’s SwiftUI `.contextMenu` and do not clear the item highlight.
+        // Item menus are owned by the right-mouse monitor (`itemContextMenuItems`).
         if itemFrames.contains(where: { $0.frame.contains(lastMenuPoint) }) {
             return nil
         }
@@ -268,9 +283,29 @@ final class WindowBackgroundDragNSView: NSView {
             )
             mi.target = handler
             mi.isEnabled = enabled
+            mi.state = item.isOn ? .on : .off
+            if item.isBold {
+                let size = NSFont.menuFont(ofSize: 0).pointSize
+                mi.attributedTitle = NSAttributedString(
+                    string: item.title,
+                    attributes: [.font: NSFont.boldSystemFont(ofSize: size)]
+                )
+            }
+            if let image = item.image {
+                mi.image = image
+                Self.forceMenuImageVisible(mi)
+            }
             menu.addItem(mi)
         }
         return menu
+    }
+
+    /// macOS 26+ may hide menu images unless visibility is forced (SwiftUI Label never reaches here).
+    private static func forceMenuImageVisible(_ item: NSMenuItem) {
+        let key = "preferredImageVisibility"
+        guard item.responds(to: NSSelectorFromString("setPreferredImageVisibility:")) else { return }
+        // `NSImageVisibility.visible` / UIKit equivalent raw value is 1.
+        item.setValue(1, forKey: key)
     }
 
     private func hasEnabledLeaf(
@@ -311,11 +346,20 @@ extension WindowBackgroundDragNSView {
     // MARK: - Dragging destination (Finder / browser)
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        canAccept(sender) ? .copy : []
+        clearAcceptCache()
+        return canAccept(sender) ? .copy : []
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         canAccept(sender) ? .copy : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        clearAcceptCache()
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        clearAcceptCache()
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -323,18 +367,29 @@ extension WindowBackgroundDragNSView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        defer { clearAcceptCache() }
         guard let onURLsDropped else { return false }
         let point = convert(sender.draggingLocation, from: nil)
-        let urls = ItemOpener.urls(from: sender.draggingPasteboard)
-        guard !urls.isEmpty else { return false }
-        onURLsDropped(urls, point)
+        let contents = PasteboardIngest.read(from: sender.draggingPasteboard)
+        guard !contents.isEmpty else { return false }
+        onURLsDropped(contents, point)
         return true
     }
 
     private func canAccept(_ sender: NSDraggingInfo) -> Bool {
         guard onURLsDropped != nil else { return false }
-        return !ItemOpener.urls(from: sender.draggingPasteboard).isEmpty
-            || ItemOpener.draggedWebLink() != nil
+        let changeCount = sender.draggingPasteboard.changeCount
+        if acceptCacheChangeCount == changeCount {
+            return acceptCacheResult
+        }
+        acceptCacheChangeCount = changeCount
+        acceptCacheResult = !PasteboardIngest.read(from: sender.draggingPasteboard).isEmpty
+        return acceptCacheResult
+    }
+
+    private func clearAcceptCache() {
+        acceptCacheChangeCount = nil
+        acceptCacheResult = false
     }
 
     // MARK: - Window drag

@@ -1,6 +1,50 @@
 import AppKit
+import SwiftUI
 
-extension NSColor {
+/// Canonical sRGB hex (`#RRGGBB` / `#AARRGGBB`). Invalid input fails at the boundary.
+struct ColorHex: Hashable, Codable, Equatable {
+    let rawValue: String
+
+    init?(rawValue: String) {
+        guard let normalized = NSColor(hex: rawValue)?.hexString else { return nil }
+        self.rawValue = normalized
+    }
+
+    init?(_ nsColor: NSColor) {
+        self.init(rawValue: nsColor.hexString)
+    }
+
+    var nsColor: NSColor {
+        NSColor(hex: rawValue) ?? .black
+    }
+
+    var color: Color {
+        Color(nsColor: nsColor)
+    }
+
+    var isLightBackground: Bool {
+        nsColor.isLightBackground
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let string = try container.decode(String.self)
+        guard let value = ColorHex(rawValue: string) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid color hex: \(string)"
+            )
+        }
+        self = value
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+private extension NSColor {
     convenience init?(hex: String) {
         var cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         if cleaned.hasPrefix("#") { cleaned.removeFirst() }
@@ -19,12 +63,14 @@ extension NSColor {
             g = Double((value & 0x00FF00) >> 8) / 255
             b = Double(value & 0x0000FF) / 255
         }
-        self.init(calibratedRed: r, green: g, blue: b, alpha: a)
+        // Must match `hexString` / luminance, which convert via `.sRGB`.
+        // `calibratedRed:` is a different space and breaks eyedropper round-trips.
+        self.init(srgbRed: r, green: g, blue: b, alpha: a)
     }
 
     /// Opaque colors stay `#RRGGBB` (swatch-friendly). Translucent colors use `#AARRGGBB`.
     var hexString: String {
-        guard let rgb = usingColorSpace(.sRGB) else { return "#1E1E1E" }
+        guard let rgb = usingColorSpace(.sRGB) else { return "#FF0000" }
         let r = Int(round(rgb.redComponent * 255))
         let g = Int(round(rgb.greenComponent * 255))
         let b = Int(round(rgb.blueComponent * 255))
@@ -44,6 +90,6 @@ extension NSColor {
         let luminance = 0.2126 * linear(rgb.redComponent)
             + 0.7152 * linear(rgb.greenComponent)
             + 0.0722 * linear(rgb.blueComponent)
-        return luminance > 0.179
+        return luminance > 0.185
     }
 }

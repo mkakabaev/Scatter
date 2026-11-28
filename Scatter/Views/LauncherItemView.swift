@@ -9,15 +9,11 @@ struct LauncherItemView: View {
     private var titleHeight: CGFloat { TileMetrics.titleHeight(labelSize: labelSize) }
     private var titleWidth: CGFloat { iconSize + TileMetrics.titleSideInset * 2 }
 
-    /// Matches the vertical padding and the icon-to-title gap in `body`.
-    private let tilePaddingV: CGFloat = 4
-    private let iconTitleSpacing: CGFloat = 4
-
     /// SwiftUI’s rendered title height. Seeded with an AppKit estimate so the first frame is already shrunk.
     @State private var measuredTitleHeight: CGFloat?
 
     var body: some View {
-        VStack(spacing: iconTitleSpacing) {
+        VStack(spacing: TileMetrics.iconTitleSpacing) {
             LauncherItemIconView(item: item, size: iconSize)
 
             Text(item.displayName)
@@ -41,7 +37,7 @@ struct LauncherItemView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, TileMetrics.horizontalPadding)
-        .padding(.vertical, tilePaddingV)
+        .padding(.vertical, TileMetrics.verticalPadding)
         .background(alignment: .top) {
             RoundedRectangle(cornerRadius: 10)
                 .fill(tileFill)
@@ -65,14 +61,12 @@ struct LauncherItemView: View {
     }
 
     private var tileColor: Color? {
-        guard let hex = item.backgroundColorHex else { return nil }
-        return ItemBackgroundPicker.color(hex: hex)
+        item.backgroundColor?.color
     }
 
     /// Light tile fill uses a black title and a softer shadow. Missing or dark fill stays white with the stronger shadow.
     private var titleOnLight: Bool {
-        guard let hex = item.backgroundColorHex, let color = NSColor(hex: hex) else { return false }
-        return color.isLightBackground
+        item.backgroundColor?.isLightBackground ?? false
     }
 
     private var tileFill: Color {

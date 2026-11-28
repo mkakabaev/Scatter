@@ -8,6 +8,65 @@ struct LauncherItem: Codable, Identifiable, Equatable {
         case file
         case folder
         case url
+
+        /// Files and folders get the Finder-drop Open With confirmation; apps and URLs do not.
+        var offersOpenWithOnDrop: Bool {
+            self == .file || self == .folder
+        }
+
+        var missingTargetMessage: String {
+            switch self {
+            case .folder:
+                return "This folder no longer exists."
+            case .file:
+                return "This file no longer exists."
+            case .app:
+                return "This application no longer exists."
+            case .url:
+                return "The item’s location could not be resolved."
+            }
+        }
+    }
+
+    /// Named tile-background swatches. 
+    enum BackgroundSwatch: String, CaseIterable, Identifiable {
+        case red, orange, gold, green, teal, blue, purple, pink, slate
+
+        var id: String { rawValue }
+
+        var name: String {
+            switch self {
+            case .red: return "Red"
+            case .orange: return "Orange"
+            case .gold: return "Gold"
+            case .green: return "Green"
+            case .teal: return "Teal"
+            case .blue: return "Blue"
+            case .purple: return "Purple"
+            case .pink: return "Pink"
+            case .slate: return "Slate"
+            }
+        }
+
+        /// Dark enough that the white item title stays readable on the tile.
+        var color: ColorHex {
+            switch self {
+            case .red: return ColorHex(rawValue: "#9E2B2B")!
+            case .orange: return ColorHex(rawValue: "#A85B12")!
+            case .gold: return ColorHex(rawValue: "#7A5E12")!
+            case .green: return ColorHex(rawValue: "#1E7A45")!
+            case .teal: return ColorHex(rawValue: "#0E6E74")!
+            case .blue: return ColorHex(rawValue: "#2458A6")!
+            case .purple: return ColorHex(rawValue: "#5C3D8A")!
+            case .pink: return ColorHex(rawValue: "#9A3D66")!
+            case .slate: return ColorHex(rawValue: "#4A5160")!
+            }
+        }
+
+        init?(color: ColorHex) {
+            guard let match = Self.allCases.first(where: { $0.color == color }) else { return nil }
+            self = match
+        }
     }
 
     struct CodablePoint: Codable, Equatable {
@@ -33,9 +92,10 @@ struct LauncherItem: Codable, Identifiable, Equatable {
     var gridRow: Int
     var openWithBookmarkData: Data?
     var openWithBundleIdentifier: String?
-    var backgroundColorHex: String?
+    var backgroundColor: ColorHex?
     var applyTimeZone: Bool
-    /// Favicon PNG for a URL item. `nil` uses the generic HTML icon.
+    /// In-memory favicon PNG for a URL item (`nil` = generic HTML icon).
+    /// Persisted as `icons/<id>.png` via `ItemIconStore` — not written into `state.json`.
     var iconPNGData: Data?
 
     init(
@@ -49,7 +109,7 @@ struct LauncherItem: Codable, Identifiable, Equatable {
         gridRow: Int = 0,
         openWithBookmarkData: Data? = nil,
         openWithBundleIdentifier: String? = nil,
-        backgroundColorHex: String? = nil,
+        backgroundColor: ColorHex? = nil,
         applyTimeZone: Bool = false,
         iconPNGData: Data? = nil
     ) {
@@ -63,7 +123,7 @@ struct LauncherItem: Codable, Identifiable, Equatable {
         self.gridRow = gridRow
         self.openWithBookmarkData = openWithBookmarkData
         self.openWithBundleIdentifier = openWithBundleIdentifier
-        self.backgroundColorHex = backgroundColorHex
+        self.backgroundColor = backgroundColor
         self.applyTimeZone = applyTimeZone
         self.iconPNGData = iconPNGData
     }
@@ -72,7 +132,7 @@ struct LauncherItem: Codable, Identifiable, Equatable {
         case id, kind, bookmarkData, urlString, displayName, position
         case gridColumn, gridRow
         case openWithBookmarkData, openWithBundleIdentifier
-        case backgroundColorHex, applyTimeZone, iconPNGData
+        case backgroundColor, applyTimeZone
     }
 
     init(from decoder: Decoder) throws {
@@ -87,9 +147,9 @@ struct LauncherItem: Codable, Identifiable, Equatable {
         gridRow = try c.decodeIfPresent(Int.self, forKey: .gridRow) ?? 0
         openWithBookmarkData = try c.decodeIfPresent(Data.self, forKey: .openWithBookmarkData)
         openWithBundleIdentifier = try c.decodeIfPresent(String.self, forKey: .openWithBundleIdentifier)
-        backgroundColorHex = try c.decodeIfPresent(String.self, forKey: .backgroundColorHex)
+        backgroundColor = try c.decodeIfPresent(ColorHex.self, forKey: .backgroundColor)
         applyTimeZone = try c.decodeIfPresent(Bool.self, forKey: .applyTimeZone) ?? false
-        iconPNGData = try c.decodeIfPresent(Data.self, forKey: .iconPNGData)
+        iconPNGData = nil
     }
 
     func encode(to encoder: Encoder) throws {
@@ -104,46 +164,16 @@ struct LauncherItem: Codable, Identifiable, Equatable {
         try c.encode(gridRow, forKey: .gridRow)
         try c.encodeIfPresent(openWithBookmarkData, forKey: .openWithBookmarkData)
         try c.encodeIfPresent(openWithBundleIdentifier, forKey: .openWithBundleIdentifier)
-        try c.encodeIfPresent(backgroundColorHex, forKey: .backgroundColorHex)
+        try c.encodeIfPresent(backgroundColor, forKey: .backgroundColor)
         if applyTimeZone {
             try c.encode(true, forKey: .applyTimeZone)
         }
-        try c.encodeIfPresent(iconPNGData, forKey: .iconPNGData)
     }
 
-    func resolvedURL() -> URL? {
-        // Prefer plain path/URL string first (launch-only; no security-scope access).
-        if let urlString {
-            if urlString.hasPrefix("/"), FileManager.default.fileExists(atPath: urlString) {
-                return URL(fileURLWithPath: urlString)
-            }
-            if let url = URL(string: urlString) {
-                if url.isFileURL, FileManager.default.fileExists(atPath: url.path) {
-                    return url
-                }
-                if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-                    return url
-                }
-                if url.isFileURL {
-                    return url
-                }
-            }
-            // file URL may have been percent-encoded; try as path
-            if urlString.hasPrefix("file:"), let url = URL(string: urlString) {
-                return url
-            }
-        }
-        if let bookmarkData {
-            var isStale = false
-            if let url = try? URL(
-                resolvingBookmarkData: bookmarkData,
-                options: [.withoutUI, .withoutMounting],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            ) {
-                return url
-            }
-        }
-        return nil
+    var hasOpenWith: Bool {
+        openWithBundleIdentifier != nil || openWithBookmarkData != nil
     }
+
+    /// Open With is for files, folders, and URLs — never apps.
+    var supportsOpenWith: Bool { kind != .app }
 }

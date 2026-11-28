@@ -4,12 +4,6 @@ struct AppState: Codable, Equatable {
     var collections: [Collection]
     var settings: Settings
 
-    enum CodingKeys: String, CodingKey {
-        case collections
-        /// JSON key remains `preferences` for compatibility with existing state files.
-        case settings = "preferences"
-    }
-
     static let empty = AppState(collections: [], settings: .default)
 
     struct Collection: Codable, Identifiable, Equatable {
@@ -27,7 +21,7 @@ struct AppState: Codable, Equatable {
     }
 
     struct Settings: Equatable {
-        var backgroundColorHex: String
+        var backgroundColor: ColorHex
         var iconSize: Double
         var labelSize: Double
         var gridSpacingHorizontal: Double
@@ -42,7 +36,7 @@ struct AppState: Codable, Equatable {
         var launchAtLogin: Bool
 
         static let `default` = Settings(
-            backgroundColorHex: "#1E1E1E",
+            backgroundColor: ColorHex(rawValue: "#F21E1E1E")!,
             iconSize: 64,
             labelSize: 12,
             gridSpacingHorizontal: 6,
@@ -59,7 +53,7 @@ struct AppState: Codable, Equatable {
 
 extension AppState.Settings: Codable {
     enum CodingKeys: String, CodingKey {
-        case backgroundColorHex, iconSize, labelSize
+        case backgroundColor, iconSize, labelSize
         case gridSpacingHorizontal, gridSpacingVertical
         case selectedCollectionID, sidebarWidth, windowWidth, windowHeight
         case timeZoneIdentifier, launchAtLogin
@@ -67,7 +61,8 @@ extension AppState.Settings: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        backgroundColorHex = try c.decodeIfPresent(String.self, forKey: .backgroundColorHex) ?? Self.default.backgroundColorHex
+        backgroundColor = try c.decodeIfPresent(ColorHex.self, forKey: .backgroundColor)
+            ?? Self.default.backgroundColor
         iconSize = (try c.decodeIfPresent(Double.self, forKey: .iconSize) ?? Self.default.iconSize).rounded()
         labelSize = (try c.decodeIfPresent(Double.self, forKey: .labelSize) ?? Self.default.labelSize).rounded()
         gridSpacingHorizontal = (try c.decodeIfPresent(Double.self, forKey: .gridSpacingHorizontal)
@@ -84,7 +79,7 @@ extension AppState.Settings: Codable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(backgroundColorHex, forKey: .backgroundColorHex)
+        try c.encode(backgroundColor, forKey: .backgroundColor)
         try c.encode(iconSize, forKey: .iconSize)
         try c.encode(labelSize, forKey: .labelSize)
         try c.encode(gridSpacingHorizontal, forKey: .gridSpacingHorizontal)

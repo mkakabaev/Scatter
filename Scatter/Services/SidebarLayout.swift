@@ -4,8 +4,8 @@ import Foundation
 /// so the icon canvas keeps a usable minimum when the window is narrow.
 enum SidebarLayout {
     static let defaultWidth: Double = 206
-    static let minimumWidth: Double = 140
-    static let maximumWidth: Double = 420
+    private static let minimumWidth: Double = 140
+    private static let maximumWidth: Double = 420
     static let minimumCanvasWidth: Double = 280
     static let splitterThickness: Double = 8
 

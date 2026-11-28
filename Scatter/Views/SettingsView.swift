@@ -13,11 +13,21 @@ struct SettingsView: View {
                     isOn: Binding(
                         get: { store.state.settings.launchAtLogin },
                         set: { enabled in
+                            let previous = store.state.settings.launchAtLogin
                             store.updateSettings { $0.launchAtLogin = enabled }
-                            LoginItemManager.setEnabled(enabled)
+                            if !LoginItemManager.setEnabled(enabled) {
+                                store.updateSettings { $0.launchAtLogin = previous }
+                            }
                         }
                     )
                 )
+                .onAppear {
+                    // Preference mirrors system status; never register/unregister here (toggle only).
+                    let systemOn = LoginItemManager.isEnabled
+                    if store.state.settings.launchAtLogin != systemOn {
+                        store.updateSettings { $0.launchAtLogin = systemOn }
+                    }
+                }
                 Picker(
                     "Time zone",
                     selection: Binding(
@@ -47,10 +57,10 @@ struct SettingsView: View {
                 ColorPicker(
                     "Background",
                     selection: Binding(
-                        get: { Color(nsColor: NSColor(hex: store.state.settings.backgroundColorHex) ?? .black) },
+                        get: { store.state.settings.backgroundColor.color },
                         set: { newColor in
-                            let ns = NSColor(newColor)
-                            store.updateSettings { $0.backgroundColorHex = ns.hexString }
+                            guard let color = ColorHex(NSColor(newColor)) else { return }
+                            store.updateSettings { $0.backgroundColor = color }
                         }
                     ),
                     supportsOpacity: true

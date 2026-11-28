@@ -42,6 +42,9 @@ struct CollectionSidebar: View {
                             rowFrames = frames
                         }
                     }
+                    .onPreferenceChange(CollectionRowGlobalFramesKey.self) { frames in
+                        store.updateSidebarRowFrames(frames)
+                    }
 
                     // Fill leftover viewport below the last row (collapses when the list is long).
                     WindowBackgroundDragView(onClick: {})
@@ -59,7 +62,9 @@ struct CollectionSidebar: View {
     }
 
     private func collectionRow(_ collection: AppState.Collection) -> some View {
-        HStack {
+        let isSelected = store.selectedCollection?.id == collection.id
+        let isDropTarget = store.itemDragHoverCollectionID == collection.id
+        return HStack {
             Text(collection.name)
                 .foregroundStyle(.white.opacity(0.9))
                 .lineLimit(1)
@@ -73,8 +78,14 @@ struct CollectionSidebar: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(store.selectedCollection?.id == collection.id ? Color.white.opacity(0.12) : Color.clear)
+                .fill(rowBackground(isSelected: isSelected, isDropTarget: isDropTarget))
         )
+        .overlay {
+            if isDropTarget {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 1.5)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             store.selectCollection(collection.id)
@@ -90,18 +101,27 @@ struct CollectionSidebar: View {
             Button("Delete", role: .destructive) {
                 store.deleteCollection(collection.id)
             }
+            .disabled(store.state.collections.count <= 1)
         }
-        .onDrop(of: [.text], isTargeted: nil) { providers in
-            handleItemDrop(providers, onto: collection.id)
-        }
+    }
+
+    private func rowBackground(isSelected: Bool, isDropTarget: Bool) -> Color {
+        if isDropTarget { return Color.accentColor.opacity(0.28) }
+        if isSelected { return Color.white.opacity(0.12) }
+        return .clear
     }
 
     private func rowFrameReader(_ id: UUID) -> some View {
         GeometryReader { geo in
-            Color.clear.preference(
-                key: CollectionRowFramesKey.self,
-                value: [id: geo.frame(in: .named("collection-sidebar"))]
-            )
+            Color.clear
+                .preference(
+                    key: CollectionRowFramesKey.self,
+                    value: [id: geo.frame(in: .named("collection-sidebar"))]
+                )
+                .preference(
+                    key: CollectionRowGlobalFramesKey.self,
+                    value: [id: geo.frame(in: .global)]
+                )
         }
     }
 
@@ -163,20 +183,16 @@ struct CollectionSidebar: View {
         return nil
     }
 
-    private func handleItemDrop(_ providers: [NSItemProvider], onto collectionID: UUID) -> Bool {
-        for provider in providers {
-            _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-                guard let raw = object as? String, let id = UUID(uuidString: raw) else { return }
-                Task { @MainActor in
-                    store.moveItem(id, toCollection: collectionID)
-                }
-            }
-        }
-        return true
-    }
 }
 
 private struct CollectionRowFramesKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct CollectionRowGlobalFramesKey: PreferenceKey {
     static var defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })

@@ -12,7 +12,7 @@ enum OpenWithPanel {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.application]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.directoryURL = FileManager.default.urls(for: .applicationDirectory, in: .localDomainMask).first
         panel.prompt = "Choose"
         panel.message = message
 
@@ -28,29 +28,5 @@ enum OpenWithPanel {
 
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return Result(applicationURL: url, alwaysOpenIn: checkbox.state == .on)
-    }
-
-    static func displayName(forApplicationAt url: URL) -> String {
-        FileManager.default.displayName(atPath: url.path)
-            .replacingOccurrences(of: ".app", with: "")
-    }
-
-    static func displayName(bundleID: String?, bookmark: Data?) -> String? {
-        if let bookmark {
-            var stale = false
-            if let url = try? URL(
-                resolvingBookmarkData: bookmark,
-                options: [.withoutUI],
-                relativeTo: nil,
-                bookmarkDataIsStale: &stale
-            ) {
-                return displayName(forApplicationAt: url)
-            }
-        }
-        if let bundleID,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            return displayName(forApplicationAt: url)
-        }
-        return nil
     }
 }

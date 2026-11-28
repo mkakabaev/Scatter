@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -9,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Dedicated clear field editor for `SearchNSTextField` (avoids default glass chrome).
     private var searchFieldEditor: NSTextView?
     private var store: AppStore!
+    private var storeCancellables = Set<AnyCancellable>()
     /// True while the launcher is key/front. Cleared on resign only after the current
     /// run-loop turn so status-item clicks (which resign key before the action) still
     /// see “was front” and can hide instead of re-raising.
@@ -27,6 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupMainWindow()
         observeStore()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        store.flushPendingSave()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -84,8 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Key + topmost without `NSApp.activate`, so the previous app keeps the menu bar.
+    /// `moveToActiveSpace` on the panel migrates it to the current desktop Space when ordered front.
     private func bringMainWindowToFront() {
         guard let window = mainWindow else { return }
+        window.collectionBehavior.insert(.moveToActiveSpace)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         mainWindowIsFrontmost = true
@@ -182,6 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
         window.isMovableByWindowBackground = true
+        // Appear on the Space the user is currently viewing (not the Space where the panel last lived).
+        window.collectionBehavior.insert(.moveToActiveSpace)
         // Clear AppKit chrome so SwiftUI can paint a translucent preference color once
         // (avoid double-compositing the same alpha on window + content).
         hosting.view.wantsLayer = true
@@ -195,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.onCancel = { [weak self] in
-            self?.store.hideMainWindow()
+            self?.store.handleMainWindowCancel()
         }
         applyRestoredContentSize(to: window)
         centerOnActiveScreen(window)
@@ -237,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .environmentObject(store)
             let hosting = NSHostingController(rootView: root)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 420, height: 360),
+                contentRect: NSRect(x: 0, y: 0, width: 512, height: 572),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
@@ -250,11 +260,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let window = settingsWindow else { return }
         window.layoutIfNeeded()
+        if let content = window.contentViewController?.view {
+            let fitting = content.fittingSize
+            if fitting.width > 0, fitting.height > 0 {
+                window.setContentSize(fitting)
+            }
+        }
         centerOnActiveScreen(window)
         // Sit above the nonactivating main panel (same level is not enough after orderFrontRegardless).
         if let main = mainWindow {
             window.level = max(main.level + 1, window.level)
         }
+        window.collectionBehavior.insert(.moveToActiveSpace)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
@@ -264,20 +281,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func observeStore() {
-        MainActorWindowBridge.shared.attach(
-            store: store,
-            showMain: { [weak self] in
-                guard let self, let window = self.mainWindow else { return }
-                window.backgroundColor = .clear
-                self.presentMainWindow()
-            },
-            hideMain: { [weak self] in
-                self?.mainWindow?.orderOut(nil)
-            },
-            showSettings: { [weak self] in
+        storeCancellables.removeAll()
+
+        store.$isMainWindowVisible
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .sink { [weak self] visible in
+                guard let self else { return }
+                if visible {
+                    self.mainWindow?.backgroundColor = .clear
+                    self.presentMainWindow()
+                } else {
+                    self.mainWindow?.orderOut(nil)
+                }
+            }
+            .store(in: &storeCancellables)
+
+        store.$settingsRequestID
+            .receive(on: DispatchQueue.main)
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
                 self?.showSettingsWindow()
             }
-        )
+            .store(in: &storeCancellables)
     }
 }
 
@@ -352,31 +379,5 @@ final class LauncherWindow: NSPanel {
             return
         }
         // Do not call super — NSWindow.keyDown beeps for keys the first responder ignores.
-    }
-}
-
-@MainActor
-final class MainActorWindowBridge {
-    static let shared = MainActorWindowBridge()
-    private var task: Task<Void, Never>?
-    private var lastVisible = false
-    private var lastSettingsRequestID = 0
-
-    func attach(store: AppStore, showMain: @escaping () -> Void, hideMain: @escaping () -> Void, showSettings: @escaping () -> Void) {
-        task?.cancel()
-        lastSettingsRequestID = store.settingsRequestID
-        task = Task {
-            while !Task.isCancelled {
-                if store.isMainWindowVisible != lastVisible {
-                    lastVisible = store.isMainWindowVisible
-                    if lastVisible { showMain() } else { hideMain() }
-                }
-                if store.settingsRequestID != lastSettingsRequestID {
-                    lastSettingsRequestID = store.settingsRequestID
-                    showSettings()
-                }
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-        }
     }
 }
